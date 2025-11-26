@@ -68,6 +68,19 @@ MONTH_TO_INTERVAL = {
 # --- Reverse mapping for the UI ---
 INTERVAL_TO_MONTH_NUM = {name: month for month, name in MONTH_TO_INTERVAL.items()}
 
+# === MARKET VIEW CONSTANTS ===
+HISTORICAL_CONTEXT_MAP = {
+    'Dry': {'min': float('-inf'), 'max': -0.25},
+    'Normal': {'min': -0.25, 'max': 0.25},
+    'Wet': {'min': 0.25, 'max': float('inf')}
+}
+
+TREND_MAP = {
+    'Get Drier': {'min': float('-inf'), 'max': -0.2},
+    'Stay Stable': {'min': -0.2, 'max': 0.2},
+    'Get Wetter': {'min': 0.2, 'max': float('inf')}
+}
+
 # === KING RANCH PRESET CONFIGURATION (CORRECTED COUNTY MAPPINGS) ===
 KING_RANCH_PRESET = {
     'grids': [9128, 9129, 8829, 9130, 7929, 8230, 8228, 8229],
@@ -186,6 +199,174 @@ def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_ye
         return all_indices_df[all_indices_df['YEAR'] < 2025]
     else:  # Select my own interval
         return all_indices_df[(all_indices_df['YEAR'] >= start_year) & (all_indices_df['YEAR'] <= end_year)]
+
+
+@st.cache_data(ttl=3600)
+def load_zscore_data(_session, grid_id):
+    """Load Z-score and ENSO data for market view filtering."""
+    numeric_grid_id = extract_numeric_grid_id(grid_id)
+
+    query = f"""
+        SELECT
+            YEAR,
+            INTERVAL_CODE,
+            INTERVAL_NAME,
+            SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD,
+            OPTICAL_MAPPING_CPC
+        FROM RAIN_INDEX_PLATINUM_ENHANCED
+        WHERE GRID_ID = {numeric_grid_id}
+        ORDER BY YEAR, INTERVAL_CODE
+    """
+    df = _session.sql(query).to_pandas()
+    df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'] = pd.to_numeric(
+        df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'], errors='coerce'
+    )
+    return df
+
+
+def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime, hist_context, trend):
+    """
+    Calculate analog years using PORTFOLIO-AGGREGATED methodology.
+
+    Instead of filtering each grid independently, this:
+    1. For each historical year, calculates the AVERAGE Z-score across ALL selected grids
+    2. Determines the dominant ENSO phase across the portfolio
+    3. Calculates portfolio-average trajectory
+    4. Filters years where the PORTFOLIO AVERAGE matches the market view
+
+    This ensures apples-to-apples comparison - all strategies are tested on the SAME years.
+
+    Returns:
+        List of dicts with keys: year, dominant_phase, phase_agreement, portfolio_avg_z,
+        portfolio_trajectory, grids_with_data
+    """
+    from collections import Counter
+
+    # Load Z-score data for all grids
+    all_grid_data = {}
+    for gid in selected_grids:
+        try:
+            zscore_df = load_zscore_data(session, gid)
+            if not zscore_df.empty:
+                all_grid_data[gid] = zscore_df
+        except Exception as e:
+            continue
+
+    if len(all_grid_data) == 0:
+        return []
+
+    # Get all years present in any grid
+    all_years = set()
+    for gid, df in all_grid_data.items():
+        all_years.update(df['YEAR'].unique())
+
+    # Filter to complete years (exclude current/incomplete)
+    all_years = [y for y in all_years if y < 2025]
+
+    matching_years = []
+
+    for year in sorted(all_years):
+        year_grid_data = []
+        year_phases = []
+        year_trajectories = []
+
+        for gid, df in all_grid_data.items():
+            year_df = df[df['YEAR'] == year]
+            if year_df.empty:
+                continue
+
+            # Calculate grid's average Z-score for the year
+            zscore_vals = year_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
+            if len(zscore_vals) == 0:
+                continue
+
+            grid_avg_z = zscore_vals.mean()
+            year_grid_data.append({
+                'grid': gid,
+                'avg_z': grid_avg_z
+            })
+
+            # Get dominant ENSO phase for this grid-year
+            phases = year_df['OPTICAL_MAPPING_CPC'].dropna()
+            if len(phases) > 0:
+                phase_counts = Counter(phases)
+                dominant_phase = phase_counts.most_common(1)[0][0]
+                year_phases.append(dominant_phase)
+
+            # Calculate trajectory (EOY - SOY)
+            # SOY = intervals 1,2,3 (Jan-Feb, Feb-Mar, Mar-Apr)
+            # EOY = intervals 9,10,11 (Sep-Oct, Oct-Nov, Nov-Dec)
+            soy_df = year_df[year_df['INTERVAL_CODE'].isin([1, 2, 3])]
+            eoy_df = year_df[year_df['INTERVAL_CODE'].isin([9, 10, 11])]
+
+            soy_z = soy_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
+            eoy_z = eoy_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
+
+            if len(soy_z) > 0 and len(eoy_z) > 0:
+                trajectory = eoy_z.mean() - soy_z.mean()
+                year_trajectories.append(trajectory)
+
+        # Require at least half the grids to have data
+        min_grids_required = max(1, len(selected_grids) // 2)
+        if len(year_grid_data) < min_grids_required:
+            continue
+
+        # Calculate portfolio averages
+        portfolio_avg_z = np.mean([g['avg_z'] for g in year_grid_data])
+        portfolio_trajectory = np.mean(year_trajectories) if year_trajectories else 0
+
+        # Determine dominant ENSO phase across portfolio (requires majority)
+        if year_phases:
+            phase_counts = Counter(year_phases)
+            dominant_phase, phase_count = phase_counts.most_common(1)[0]
+            phase_agreement = phase_count / len(year_phases)
+
+            # Require majority agreement on phase
+            if phase_agreement < 0.5:
+                dominant_phase = 'Mixed'
+        else:
+            dominant_phase = 'Unknown'
+            phase_agreement = 0
+
+        # Apply filters
+        # ENSO regime filter
+        if regime != 'Any':
+            if regime == 'La Niña' and dominant_phase != 'La Nina':
+                continue
+            elif regime == 'El Niño' and dominant_phase != 'El Nino':
+                continue
+            elif regime == 'Neutral' and dominant_phase != 'Neutral':
+                continue
+
+        # Historical context filter (based on portfolio average Z)
+        if hist_context != 'Any':
+            # Parse the selection to get the key
+            context_key = hist_context.split(' ')[0]  # "Dry", "Normal", or "Wet"
+            context_bounds = HISTORICAL_CONTEXT_MAP.get(context_key, None)
+            if context_bounds:
+                if not (context_bounds['min'] <= portfolio_avg_z < context_bounds['max']):
+                    continue
+
+        # Trajectory filter
+        if trend != 'Any':
+            # Parse the selection to get the key
+            trend_key = trend.split(' ')[0] + ' ' + trend.split(' ')[1]  # "Get Drier", "Stay Stable", "Get Wetter"
+            trend_bounds = TREND_MAP.get(trend_key, None)
+            if trend_bounds:
+                if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
+                    continue
+
+        # Year matches all criteria
+        matching_years.append({
+            'year': year,
+            'dominant_phase': dominant_phase,
+            'phase_agreement': phase_agreement,
+            'portfolio_avg_z': portfolio_avg_z,
+            'portfolio_trajectory': portfolio_trajectory,
+            'grids_with_data': len(year_grid_data)
+        })
+
+    return matching_years
 
 
 @st.cache_data(ttl=3600)
@@ -3156,21 +3337,80 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                 st.markdown("---")
 
-                # --- Generate Button ---
-                if st.button("🌦️ Generate Weather Challengers", key="ps_generate_weather", type="primary"):
-                    st.info("Weather Challenger generation not yet implemented. Next prompt will add this logic.")
+                # --- Find Analog Years Button ---
+                if st.button("🔍 Find Analog Years", key="ps_find_analog_years", type="secondary"):
+                    with st.spinner("Analyzing historical years across portfolio..."):
+                        analog_years = calculate_portfolio_aggregated_analog_years(
+                            session,
+                            weather_grids,
+                            enso_regime,
+                            historical_context,
+                            trajectory
+                        )
 
-                    # Store configuration in session state for next implementation
-                    st.session_state.weather_challenger_config = {
-                        'grids': weather_grids,
-                        'acres': weather_acres,
-                        'enso_regime': enso_regime,
-                        'historical_context': historical_context,
-                        'trajectory': trajectory,
-                        'rank_by': weather_rank_by,
-                        'interval_range': weather_interval_range
-                    }
-                    st.success("Configuration saved. Ready for implementation.")
+                        st.session_state.ps_analog_years = analog_years
+                        st.session_state.ps_weather_config = {
+                            'grids': weather_grids,
+                            'acres': weather_acres,
+                            'enso_regime': enso_regime,
+                            'historical_context': historical_context,
+                            'trajectory': trajectory,
+                            'rank_by': weather_rank_by,
+                            'interval_range': weather_interval_range
+                        }
+
+                # Display analog years results
+                if 'ps_analog_years' in st.session_state:
+                    analog_years = st.session_state.ps_analog_years
+
+                    if analog_years and len(analog_years) > 0:
+                        st.success(f"**Found {len(analog_years)} analog years** matching your market view.")
+
+                        # Show details in expander
+                        with st.expander("📅 View Analog Year Details", expanded=False):
+                            analog_df = pd.DataFrame(analog_years)
+                            analog_df = analog_df.rename(columns={
+                                'year': 'Year',
+                                'dominant_phase': 'ENSO Phase',
+                                'phase_agreement': 'Phase Agreement',
+                                'portfolio_avg_z': 'Portfolio Avg Z',
+                                'portfolio_trajectory': 'Trajectory',
+                                'grids_with_data': 'Grids w/ Data'
+                            })
+
+                            st.dataframe(
+                                analog_df.style.format({
+                                    'Year': '{:.0f}',
+                                    'Phase Agreement': '{:.0%}',
+                                    'Portfolio Avg Z': '{:.3f}',
+                                    'Trajectory': '{:.3f}',
+                                    'Grids w/ Data': '{:.0f}'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                            # Download button
+                            csv_data = analog_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Analog Years CSV",
+                                data=csv_data,
+                                file_name="analog_years.csv",
+                                mime="text/csv"
+                            )
+
+                        st.markdown("---")
+
+                        # Placeholder for next phase
+                        st.info("✅ Analog years identified. Next: Generate Weather Challengers (coming in next update)")
+
+                        # Generate button placeholder
+                        if st.button("🌦️ Generate Weather Challengers", key="ps_generate_weather", type="primary", disabled=True):
+                            pass
+                        st.caption("Generation not yet implemented")
+
+                    elif 'ps_analog_years' in st.session_state:
+                        st.warning("No analog years found matching your criteria. Try broadening your market view (e.g., set some filters to 'Any').")
 
 
 # =============================================================================
@@ -5151,7 +5391,23 @@ def main():
     # King Ranch Comparison Mode notification
     if st.session_state.get('s4_king_ranch_comparison_mode', False):
         st.sidebar.info("📊 King Ranch Comparison Mode Active\n\nGo to Optimizer tab → Enable 'Configure acres per grid' → Run to see Current vs. Suggested analysis")
-    
+
+    with st.sidebar.expander("📊 Z-Score Translation Key"):
+        st.markdown("""
+        **Historical Context (Current State):**
+        - **Dry**: Z < -0.25 (drier than normal)
+        - **Normal**: -0.25 ≤ Z ≤ 0.25
+        - **Wet**: Z > 0.25 (wetter than normal)
+
+        **Trajectory (Expected Change):**
+        - **Get Drier**: Δ < -0.2
+        - **Stay Stable**: -0.2 ≤ Δ ≤ 0.2
+        - **Get Wetter**: Δ > 0.2
+
+        *Z-scores compare rainfall to historical average.*
+        *Trajectory = End-of-year minus Start-of-year Z-score.*
+        """)
+
     st.sidebar.divider()
     st.sidebar.caption("*2025 Rates are used for this application")
     st.sidebar.caption("*Common Parameters are secondary to parameters on each tab")
