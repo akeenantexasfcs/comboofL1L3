@@ -333,7 +333,7 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
 
         # Apply filters
         # ENSO regime filter
-        if regime != 'Any':
+        if not regime.startswith('Any'):
             if regime == 'La Niña' and dominant_phase != 'La Nina':
                 continue
             elif regime == 'El Niño' and dominant_phase != 'El Nino':
@@ -342,14 +342,14 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
                 continue
 
         # Historical context filter (based on portfolio average Z)
-        if hist_context != 'Any':
+        if not hist_context.startswith('Any'):
             context_bounds = HISTORICAL_CONTEXT_MAP.get(hist_context, None)
             if context_bounds:
                 if not (context_bounds['min'] <= portfolio_avg_z < context_bounds['max']):
                     continue
 
         # Trajectory filter
-        if trend != 'Any':
+        if not trend.startswith('Any'):
             trend_bounds = TREND_MAP.get(trend, None)
             if trend_bounds:
                 if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
@@ -3653,7 +3653,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col1:
                     enso_regime = st.selectbox(
                         "ENSO Regime",
-                        options=["La Niña", "El Niño", "Neutral", "Any"],
+                        options=["La Niña", "El Niño", "Neutral", "Any (I am not sure)"],
                         index=0,
                         key="ps_weather_enso"
                     )
@@ -3661,7 +3661,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col2:
                     historical_context = st.selectbox(
                         "Historical Context",
-                        options=["Dry", "Normal", "Wet", "Any"],
+                        options=["Dry", "Normal", "Wet", "Any (I am not sure)"],
                         index=0,
                         key="ps_weather_hist_context"
                     )
@@ -3669,7 +3669,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col3:
                     trajectory = st.selectbox(
                         "Expected Trajectory",
-                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any"],
+                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any (I am not sure)"],
                         index=0,
                         key="ps_weather_trajectory"
                     )
@@ -4366,30 +4366,30 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                             # Analog Year Correlation Matrix
                             if not weather3.get('analog_roi_correlation', pd.DataFrame()).empty:
-                                st.markdown("#### Analog Year ROI Correlations")
-                                st.caption("Correlations based on performance during analog years only. Lower = better diversification.")
+                                with st.expander("📉 Analog Year ROI Correlations", expanded=False):
+                                    st.caption("Correlations based on performance during analog years only. Lower = better diversification.")
 
-                                corr_df = weather3['analog_roi_correlation']
+                                    corr_df = weather3['analog_roi_correlation']
 
-                                # Generate heatmap matching Historical Grid Correlations style
-                                fig, ax = plt.subplots(figsize=(10, 6))
-                                sns.heatmap(
-                                    corr_df,
-                                    annot=True,
-                                    cmap='RdYlGn_r',
-                                    fmt=".3f",
-                                    vmin=-1,
-                                    vmax=1,
-                                    center=0,
-                                    ax=ax,
-                                    square=True,
-                                    linewidths=0.5
-                                )
-                                ax.set_title("Analog Year ROI Correlations", fontsize=12)
-                                plt.tight_layout()
+                                    # Generate heatmap matching Historical Grid Correlations style
+                                    fig, ax = plt.subplots(figsize=(10, 6))
+                                    sns.heatmap(
+                                        corr_df,
+                                        annot=True,
+                                        cmap='RdYlGn_r',
+                                        fmt=".3f",
+                                        vmin=-1,
+                                        vmax=1,
+                                        center=0,
+                                        ax=ax,
+                                        square=True,
+                                        linewidths=0.5
+                                    )
+                                    ax.set_title("Analog Year ROI Correlations", fontsize=12)
+                                    plt.tight_layout()
 
-                                st.pyplot(fig)
-                                plt.close(fig)
+                                    st.pyplot(fig)
+                                    plt.close(fig)
 
                             # Allocation Table
                             st.markdown("#### Weather Challenger 3 Allocations")
