@@ -343,18 +343,14 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
 
         # Historical context filter (based on portfolio average Z)
         if hist_context != 'Any':
-            # Parse the selection to get the key
-            context_key = hist_context.split(' ')[0]  # "Dry", "Normal", or "Wet"
-            context_bounds = HISTORICAL_CONTEXT_MAP.get(context_key, None)
+            context_bounds = HISTORICAL_CONTEXT_MAP.get(hist_context, None)
             if context_bounds:
                 if not (context_bounds['min'] <= portfolio_avg_z < context_bounds['max']):
                     continue
 
         # Trajectory filter
         if trend != 'Any':
-            # Parse the selection to get the key
-            trend_key = trend.split(' ')[0] + ' ' + trend.split(' ')[1]  # "Get Drier", "Stay Stable", "Get Wetter"
-            trend_bounds = TREND_MAP.get(trend_key, None)
+            trend_bounds = TREND_MAP.get(trend, None)
             if trend_bounds:
                 if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
                     continue
@@ -3664,8 +3660,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                 with mv_col2:
                     historical_context = st.selectbox(
-                        "Historical Context (Z-Score)",
-                        options=["Dry (< -0.25)", "Normal (-0.25 to +0.25)", "Wet (> +0.25)", "Any"],
+                        "Historical Context",
+                        options=["Dry", "Normal", "Wet", "Any"],
                         index=0,
                         key="ps_weather_hist_context"
                     )
@@ -3673,7 +3669,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col3:
                     trajectory = st.selectbox(
                         "Expected Trajectory",
-                        options=["Get Drier (< -0.2)", "Stay Stable (-0.2 to +0.2)", "Get Wetter (> +0.2)", "Any"],
+                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any"],
                         index=0,
                         key="ps_weather_trajectory"
                     )
@@ -4374,10 +4370,26 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 st.caption("Correlations based on performance during analog years only. Lower = better diversification.")
 
                                 corr_df = weather3['analog_roi_correlation']
-                                st.dataframe(
-                                    corr_df.style.format("{:.3f}").background_gradient(cmap='RdYlGn_r', vmin=-1, vmax=1),
-                                    use_container_width=True
+
+                                # Generate heatmap matching Historical Grid Correlations style
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                sns.heatmap(
+                                    corr_df,
+                                    annot=True,
+                                    cmap='RdYlGn_r',
+                                    fmt=".3f",
+                                    vmin=-1,
+                                    vmax=1,
+                                    center=0,
+                                    ax=ax,
+                                    square=True,
+                                    linewidths=0.5
                                 )
+                                ax.set_title("Analog Year ROI Correlations", fontsize=12)
+                                plt.tight_layout()
+
+                                st.pyplot(fig)
+                                plt.close(fig)
 
                             # Allocation Table
                             st.markdown("#### Weather Challenger 3 Allocations")
