@@ -3521,12 +3521,11 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         champ_roi = champ_metrics.get('cumulative_roi', 0)
 
         if chall_roi > champ_roi:
-            improvement = ((chall_roi - champ_roi) / abs(champ_roi) * 100) if champ_roi != 0 else 0
-            st.success(f"**CHALLENGER WINS!** ROI improved by {improvement:.1f}%")
+            st.success("**CHALLENGER WINS!**")
         elif chall_roi < champ_roi:
-            st.warning("**Champion holds!** The baseline strategy performed better.")
+            st.warning("**CHAMPION HOLDS!**")
         else:
-            st.info("**TIE!** Both strategies performed equally.")
+            st.info("**TIE!**")
 
         # === ALLOCATION COMPARISON: VERTICAL STACK (Styled DataFrames with Downloads) ===
         st.markdown("#### Interval Allocation Comparison")
@@ -3940,7 +3939,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         # --- Interval Strategy ---
                         st.markdown("**Interval Strategy**")
 
-                        weather3_iteration_map = {'Fast': 500, 'Standard': 2000, 'Thorough': 5000, 'Maximum': 10000}
+                        weather3_iteration_map = {'Fast': 500, 'Standard': 3000, 'Thorough': 7000, 'Maximum': 15000}
                         weather3_search_depth_key = st.select_slider(
                             "Search Depth",
                             options=list(weather3_iteration_map.keys()),
