@@ -219,6 +219,8 @@ def load_zscore_data(_session, grid_id):
             INTERVAL_CODE,
             INTERVAL_NAME,
             SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD,
+            SEQUENTIAL_Z_SCORE_5P,
+            SEQUENTIAL_Z_SCORE_11P,
             OPTICAL_MAPPING_CPC
         FROM RAIN_INDEX_PLATINUM_ENHANCED
         WHERE GRID_ID = {numeric_grid_id}
@@ -227,6 +229,12 @@ def load_zscore_data(_session, grid_id):
     df = _session.sql(query).to_pandas()
     df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'] = pd.to_numeric(
         df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'], errors='coerce'
+    )
+    df['SEQUENTIAL_Z_SCORE_5P'] = pd.to_numeric(
+        df['SEQUENTIAL_Z_SCORE_5P'], errors='coerce'
+    )
+    df['SEQUENTIAL_Z_SCORE_11P'] = pd.to_numeric(
+        df['SEQUENTIAL_Z_SCORE_11P'], errors='coerce'
     )
     return df
 
@@ -300,21 +308,23 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
                 dominant_phase = phase_counts.most_common(1)[0][0]
                 year_phases.append(dominant_phase)
 
-            # Calculate trajectory (EOY - SOY)
-            # SOY = Start of Year (Jan-Feb, Feb-Mar, Mar-Apr)
-            # EOY = End of Year (Sep-Oct, Oct-Nov, Nov-Dec)
-            soy_intervals = ['Jan-Feb', 'Feb-Mar', 'Mar-Apr']
-            eoy_intervals = ['Sep-Oct', 'Oct-Nov', 'Nov-Dec']
+            # Calculate trajectory using 11P/5P methodology
+            # SOY 11P = Start of Year 11-period Z-score (from Jan-Feb interval - stable baseline)
+            # EOY 5P = End of Year 5-period Z-score (from Nov-Dec interval - recent trend)
+            # This captures intra-year momentum: where the year started vs where it's trending
 
-            soy_df = year_df[year_df['INTERVAL_NAME'].isin(soy_intervals)]
-            eoy_df = year_df[year_df['INTERVAL_NAME'].isin(eoy_intervals)]
+            year_df_sorted = year_df.sort_values('INTERVAL_CODE')
 
-            soy_z = soy_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
-            eoy_z = eoy_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
+            if len(year_df_sorted) >= 11:
+                first_interval = year_df_sorted.iloc[0]   # Jan-Feb
+                last_interval = year_df_sorted.iloc[-1]   # Nov-Dec
 
-            if len(soy_z) > 0 and len(eoy_z) > 0:
-                trajectory = eoy_z.mean() - soy_z.mean()
-                year_trajectories.append(trajectory)
+                z_11p_start = first_interval.get('SEQUENTIAL_Z_SCORE_11P') if 'SEQUENTIAL_Z_SCORE_11P' in first_interval.index else None
+                z_5p_end = last_interval.get('SEQUENTIAL_Z_SCORE_5P') if 'SEQUENTIAL_Z_SCORE_5P' in last_interval.index else None
+
+                if pd.notna(z_11p_start) and pd.notna(z_5p_end):
+                    trajectory = z_5p_end - z_11p_start
+                    year_trajectories.append(trajectory)
 
         # Require at least half the grids to have data
         min_grids_required = max(1, len(selected_grids) // 2)
@@ -4030,6 +4040,15 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         st.markdown("---")
 
                         # --- Generate Weather Challenger Button ---
+                        weather2_iteration_map = {'Fast': 500, 'Standard': 3000, 'Thorough': 7000, 'Maximum': 15000}
+                        weather2_depth_key = st.select_slider(
+                            "Search Depth",
+                            options=list(weather2_iteration_map.keys()),
+                            value='Standard',
+                            key="ps_weather2_depth"
+                        )
+                        weather2_iterations = weather2_iteration_map[weather2_depth_key]
+
                         if st.button("🌦️ Generate Weather Challenger 2", key="ps_generate_weather", type="primary"):
                             weather_config = st.session_state.get('ps_weather_config', {})
                             weather_grids_gen = weather_config.get('grids', [])
@@ -4047,7 +4066,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 with st.spinner(f"Optimizing {len(weather_grids_gen)} grids for {len(analog_year_list)} analog years..."):
                                     weather_challenger_allocations = {}
                                     weather_challenger_acres = {}
-                                    optimization_iterations = 2000
+                                    optimization_iterations = weather2_iterations
 
                                     progress_bar = st.progress(0)
                                     for idx, gid in enumerate(weather_grids_gen):
@@ -7325,19 +7344,21 @@ def main():
 
     with st.sidebar.expander("📊 Z-Score Translation Key"):
         st.markdown("""
-        **Historical Context (Current State):**
-        - **Dry**: Z < -0.25
-        - **Normal**: -0.25 ≤ Z ≤ 0.25
-        - **Wet**: Z > 0.25
+        **Historical Context (Year Avg Z-Score):**
+        - **Dry**: Z < -0.25 (~40th percentile or drier)
+        - **Normal**: -0.25 ≤ Z ≤ 0.25 (~40th to ~60th percentile)
+        - **Wet**: Z > 0.25 (~60th percentile or wetter)
 
-        **Trajectory (Expected Change):**
+        **Expected Trajectory (SOY 11P vs EOY 5P):**
         - **Get Drier**: Δ < -0.05
         - **Stay Stable**: -0.05 ≤ Δ ≤ 0.05
         - **Get Wetter**: Δ > 0.05
 
-        *Z-scores compare rainfall to historical average.*
+        *Trajectory Δ = Nov-Dec 5P Z minus Jan-Feb 11P Z*
 
-        *Trajectory = Avg(Sep-Nov Z-scores) minus Avg(Jan-Mar Z-scores), then averaged across all grids in portfolio.*
+        *11P = 11-period rolling avg (stable baseline)*
+        *5P = 5-period rolling avg (recent trend)*
+        *Positive Δ = year trending wetter*
         """)
 
     with st.sidebar.expander("🏆 Strategy Key"):
