@@ -3311,14 +3311,16 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
     # Display Champion Results (if available)
     if 'champion_results' in st.session_state and st.session_state.champion_results:
-        champ = st.session_state.champion_results
-        metrics = champ.get('metrics', {})
+        with st.container(border=True):
+            st.markdown("#### 🏆 Champion Results")
+            champ = st.session_state.champion_results
+            metrics = champ.get('metrics', {})
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Cumulative ROI", f"{metrics.get('cumulative_roi', 0):.1%}")
-        col2.metric("Risk-Adj Return", f"{metrics.get('risk_adj_return', 0):.2f}")
-        col3.metric("Avg Annual Premium", f"${metrics.get('avg_annual_premium', 0):,.0f}")
-        col4.metric("Win Rate", f"{metrics.get('profitable_pct', 0):.0%}")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Cumulative ROI", f"{metrics.get('cumulative_roi', 0):.1%}")
+            col2.metric("Risk-Adj Return", f"{metrics.get('risk_adj_return', 0):.2f}")
+            col3.metric("Avg Annual Premium", f"${metrics.get('avg_annual_premium', 0):,.0f}")
+            col4.metric("Win Rate", f"{metrics.get('profitable_pct', 0):.0%}")
 
     st.divider()
 
@@ -3783,36 +3785,38 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         st.caption("Tables show allocation percentages by interval. Row Sum should be 100%.")
 
         # Champion Table (styled dataframe with download)
-        st.markdown("**Champion (Baseline)**")
-        champ_styled, champ_df = create_optimized_allocation_table(
-            champ['allocations'], champ_grids, grid_acres=champ['acres'],
-            label="CHAMPION AVERAGE"
-        )
-        st.dataframe(champ_styled, use_container_width=True, hide_index=True)
-        st.download_button(
-            label="Download Champion CSV",
-            data=champ_df.to_csv(index=False),
-            file_name="champion_allocations.csv",
-            mime="text/csv",
-            key="download_champion_csv"
-        )
+        with st.container(border=True):
+            st.markdown("**🏆 Champion (Baseline)**")
+            champ_styled, champ_df = create_optimized_allocation_table(
+                champ['allocations'], champ_grids, grid_acres=champ['acres'],
+                label="CHAMPION AVERAGE"
+            )
+            st.dataframe(champ_styled, use_container_width=True, hide_index=True)
+            st.download_button(
+                label="Download Champion CSV",
+                data=champ_df.to_csv(index=False),
+                file_name="champion_allocations.csv",
+                mime="text/csv",
+                key="download_champion_csv"
+            )
 
         st.markdown("")  # Spacer
 
-        # Challenger Table (styled dataframe with download)
-        st.markdown("**Challenger (Optimized)**")
-        chall_styled, chall_df = create_optimized_allocation_table(
-            chall['allocations'], chall_grids, grid_acres=chall['acres'],
-            label="OPTIMIZED AVERAGE"
-        )
-        st.dataframe(chall_styled, use_container_width=True, hide_index=True)
-        st.download_button(
-            label="Download Challenger CSV",
-            data=chall_df.to_csv(index=False),
-            file_name="challenger_allocations.csv",
-            mime="text/csv",
-            key="download_challenger_csv"
-        )
+        # Challenger 1 Table (styled dataframe with download)
+        with st.container(border=True):
+            st.markdown("**⚔️ Challenger 1 (Optimized Intervals)**")
+            chall_styled, chall_df = create_optimized_allocation_table(
+                chall['allocations'], chall_grids, grid_acres=chall['acres'],
+                label="OPTIMIZED AVERAGE"
+            )
+            st.dataframe(chall_styled, use_container_width=True, hide_index=True)
+            st.download_button(
+                label="Download Challenger CSV",
+                data=chall_df.to_csv(index=False),
+                file_name="challenger_allocations.csv",
+                mime="text/csv",
+                key="download_challenger_csv"
+            )
 
         st.markdown("")  # Spacer
 
@@ -3971,26 +3975,43 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                     analog_years = st.session_state.ps_analog_years
 
                     if analog_years and len(analog_years) > 0:
-                        st.success(f"**Found {len(analog_years)} analog years** matching your market view.")
+                        # Build descriptive label with all three criteria
+                        mv_enso = st.session_state.get('ps_weather_enso', 'Any')
+                        mv_context = st.session_state.get('ps_weather_hist_context', 'Any')
+                        mv_trend = st.session_state.get('ps_weather_trajectory', 'Any')
+
+                        criteria_parts = []
+                        if mv_enso != 'Any':
+                            criteria_parts.append(mv_enso)
+                        if mv_context != 'Any':
+                            criteria_parts.append(mv_context)
+                        if mv_trend != 'Any':
+                            criteria_parts.append(mv_trend)
+
+                        criteria_label = " + ".join(criteria_parts) if criteria_parts else "All Conditions"
+                        st.success(f"**Found {len(analog_years)} analog years** matching: {criteria_label}")
 
                         # Show details in expander
                         with st.expander("📅 View Analog Year Details", expanded=False):
                             analog_df = pd.DataFrame(analog_years)
+
+                            # Drop phase_agreement column before renaming
+                            if 'phase_agreement' in analog_df.columns:
+                                analog_df = analog_df.drop(columns=['phase_agreement'])
+
                             analog_df = analog_df.rename(columns={
                                 'year': 'Year',
                                 'dominant_phase': 'ENSO Phase',
-                                'phase_agreement': 'Phase Agreement',
                                 'portfolio_avg_z': 'Portfolio Avg Z',
-                                'portfolio_trajectory': 'Trajectory',
+                                'portfolio_trajectory': 'Avg Trajectory',
                                 'grids_with_data': 'Grids w/ Data'
                             })
 
                             st.dataframe(
                                 analog_df.style.format({
                                     'Year': '{:.0f}',
-                                    'Phase Agreement': '{:.0%}',
                                     'Portfolio Avg Z': '{:.3f}',
-                                    'Trajectory': '{:.3f}',
+                                    'Avg Trajectory': '{:.3f}',
                                     'Grids w/ Data': '{:.0f}'
                                 }),
                                 use_container_width=True,
@@ -4086,58 +4107,66 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             weather_results = st.session_state.weather_challenger_results
 
                             st.markdown("---")
-                            st.markdown("### 🌦️ Weather Challenger 2 Results")
+                            with st.container(border=True):
+                                st.markdown("### 🌦️ Challenger 2: Weather Naive")
 
-                            # Methodology note
-                            analog_count = len(weather_results.get('analog_years_used', []))
-                            config = st.session_state.get('ps_weather_config', {})
-                            enso_text = config.get('enso_regime', 'N/A')
-                            context_text = config.get('historical_context', 'N/A')
+                                # Methodology note
+                                analog_count = len(weather_results.get('analog_years_used', []))
+                                # Build full criteria label
+                                config = st.session_state.get('ps_weather_config', {})
+                                criteria_parts = []
+                                if config.get('enso_regime', 'Any') != 'Any':
+                                    criteria_parts.append(config.get('enso_regime'))
+                                if config.get('historical_context', 'Any') != 'Any':
+                                    criteria_parts.append(config.get('historical_context'))
+                                if config.get('trajectory', 'Any') != 'Any':
+                                    criteria_parts.append(config.get('trajectory'))
+                                full_criteria = " + ".join(criteria_parts) if criteria_parts else "All Conditions"
 
-                            st.info(f"**Methodology:** Weather Challenger 2 optimizes each grid independently for the **{analog_count} analog years** matching your market view ({enso_text} + {context_text}). No cross-grid correlation is considered - this is a 'naive' approach.")
+                                st.info(f"**Methodology:** Weather Challenger 2 optimizes each grid independently for the **{analog_count} analog years** matching: **{full_criteria}**. No cross-grid correlation is considered - this is a 'naive' approach.")
 
-                            # 3-Way Performance Comparison
-                            if ('champion_results' in st.session_state and st.session_state.champion_results and
-                                'challenger_results' in st.session_state and st.session_state.challenger_results):
+                                # 3-Way Performance Comparison
+                                if ('champion_results' in st.session_state and st.session_state.champion_results and
+                                    'challenger_results' in st.session_state and st.session_state.challenger_results):
 
-                                st.markdown("#### 3-Way Performance Comparison")
-                                champ_metrics = st.session_state.champion_results.get('metrics', {})
-                                chall1_metrics = st.session_state.challenger_results.get('metrics', {})
-                                weather_metrics_disp = weather_results.get('metrics', {})
+                                    st.markdown("#### 3-Way Performance Comparison")
+                                    champ_metrics = st.session_state.champion_results.get('metrics', {})
+                                    chall1_metrics = st.session_state.challenger_results.get('metrics', {})
+                                    weather_metrics_disp = weather_results.get('metrics', {})
 
-                                comparison_3way_df = create_3way_comparison_table(champ_metrics, chall1_metrics, weather_metrics_disp)
-                                st.table(comparison_3way_df.set_index('Metric'))
+                                    comparison_3way_df = create_3way_comparison_table(champ_metrics, chall1_metrics, weather_metrics_disp)
+                                    st.table(comparison_3way_df.set_index('Metric'))
 
-                                # Winner determination
-                                champ_roi = champ_metrics.get('cumulative_roi', 0)
-                                chall1_roi = chall1_metrics.get('cumulative_roi', 0)
-                                weather_roi = weather_metrics_disp.get('cumulative_roi', 0)
+                                    # Winner determination
+                                    champ_roi = champ_metrics.get('cumulative_roi', 0)
+                                    chall1_roi = chall1_metrics.get('cumulative_roi', 0)
+                                    weather_roi = weather_metrics_disp.get('cumulative_roi', 0)
 
-                                best_roi = max(champ_roi, chall1_roi, weather_roi)
-                                if weather_roi == best_roi and weather_roi > champ_roi:
-                                    st.success(f"**WEATHER CHALLENGER 2 WINS!** ROI: {weather_roi:.1%}")
-                                elif chall1_roi == best_roi and chall1_roi > champ_roi:
-                                    st.success(f"**CHALLENGER 1 WINS!** ROI: {chall1_roi:.1%}")
-                                elif champ_roi == best_roi:
-                                    st.warning(f"**CHAMPION HOLDS!** ROI: {champ_roi:.1%}")
+                                    best_roi = max(champ_roi, chall1_roi, weather_roi)
+                                    if weather_roi == best_roi and weather_roi > champ_roi:
+                                        st.success(f"**WEATHER CHALLENGER 2 WINS!** ROI: {weather_roi:.1%}")
+                                    elif chall1_roi == best_roi and chall1_roi > champ_roi:
+                                        st.success(f"**CHALLENGER 1 WINS!** ROI: {chall1_roi:.1%}")
+                                    elif champ_roi == best_roi:
+                                        st.warning(f"**CHAMPION HOLDS!** ROI: {champ_roi:.1%}")
 
-                            # Weather Challenger Allocation Table
-                            st.markdown("#### Weather Challenger 2 Allocations")
-                            weather_styled, weather_alloc_df = create_optimized_allocation_table(
-                                weather_results['allocations'],
-                                weather_results['grids'],
-                                grid_acres=weather_results['acres'],
-                                label="WEATHER AVERAGE"
-                            )
-                            st.dataframe(weather_styled, use_container_width=True, hide_index=True)
+                                # Weather Challenger Allocation Table
+                                st.markdown("#### Weather Challenger 2 Allocations")
+                                weather_styled, weather_alloc_df = create_optimized_allocation_table(
+                                    weather_results['allocations'],
+                                    weather_results['grids'],
+                                    grid_acres=weather_results['acres'],
+                                    label="WEATHER AVERAGE"
+                                )
+                                st.dataframe(weather_styled, use_container_width=True, hide_index=True)
 
-                            st.download_button(
-                                label="📥 Download Weather Challenger Allocations CSV",
-                                data=weather_alloc_df.to_csv(index=False),
-                                file_name="weather_challenger_allocations.csv",
-                                mime="text/csv",
-                                key="download_weather_csv"
-                            )
+                                st.download_button(
+                                    label="📥 Download Weather Challenger Allocations CSV",
+                                    data=weather_alloc_df.to_csv(index=False),
+                                    file_name="weather_challenger_allocations.csv",
+                                    mime="text/csv",
+                                    key="download_weather_csv"
+                                )
 
                         # === WEATHER CHALLENGER 3: Correlated Weather Portfolio ===
                         st.markdown("---")
@@ -4538,141 +4567,154 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             weather3 = st.session_state.weather_challenger_3_results
 
                             st.markdown("---")
-                            st.markdown("### 🌪️ Challenger 3 (MVO) Results")
+                            with st.container(border=True):
+                                st.markdown("### 🌪️ Challenger 3: Weather MVO")
 
-                            # Methodology note
-                            analog_count_3 = len(weather3.get('analog_years_used', []))
-                            budget_text = ""
-                            if weather3.get('budget_enabled'):
-                                budget_text = f" | Budget: ${weather3.get('budget_amount', 0):,.0f}"
-                            st.info(f"**Methodology:** Challenger 3 uses two-stage optimization: (1) Optimize intervals per grid on {analog_count_3} analog years, (2) MVO redistributes acres based on cross-grid correlations. Risk aversion: {weather3.get('risk_aversion', 1.0)}{budget_text}")
+                                # Methodology note
+                                analog_count_3 = len(weather3.get('analog_years_used', []))
+                                budget_text = ""
+                                if weather3.get('budget_enabled'):
+                                    budget_text = f" | Budget: ${weather3.get('budget_amount', 0):,.0f}"
 
-                            # 4-Way Performance Comparison
-                            if ('champion_results' in st.session_state and st.session_state.champion_results and
-                                'challenger_results' in st.session_state and st.session_state.challenger_results and
-                                'weather_challenger_results' in st.session_state and st.session_state.weather_challenger_results):
+                                # Build full criteria label for Challenger 3
+                                config3 = st.session_state.get('ps_weather_config', {})
+                                criteria_parts_3 = []
+                                if config3.get('enso_regime', 'Any') != 'Any':
+                                    criteria_parts_3.append(config3.get('enso_regime'))
+                                if config3.get('historical_context', 'Any') != 'Any':
+                                    criteria_parts_3.append(config3.get('historical_context'))
+                                if config3.get('trajectory', 'Any') != 'Any':
+                                    criteria_parts_3.append(config3.get('trajectory'))
+                                full_criteria_3 = " + ".join(criteria_parts_3) if criteria_parts_3 else "All Conditions"
 
-                                st.markdown("#### 4-Way Performance Comparison")
+                                st.info(f"**Methodology:** Challenger 3 uses two-stage optimization on **{analog_count_3} analog years** matching: **{full_criteria_3}**. (1) Optimize intervals per grid, (2) MVO redistributes acres based on cross-grid correlations. Risk aversion: {weather3.get('risk_aversion', 1.0)}{budget_text}")
 
-                                champ_m = st.session_state.champion_results.get('metrics', {})
-                                chall1_m = st.session_state.challenger_results.get('metrics', {})
-                                weather2_m = st.session_state.weather_challenger_results.get('metrics', {})
-                                weather3_m = weather3.get('metrics', {})
+                                # 4-Way Performance Comparison
+                                if ('champion_results' in st.session_state and st.session_state.champion_results and
+                                    'challenger_results' in st.session_state and st.session_state.challenger_results and
+                                    'weather_challenger_results' in st.session_state and st.session_state.weather_challenger_results):
 
-                                comparison_4way = {
-                                    'Metric': ['Cumulative ROI', 'Risk-Adjusted Return', 'Est. Annual Premium', 'Win Rate'],
-                                    'Champion': [
-                                        f"{champ_m.get('cumulative_roi', 0):.1%}",
-                                        f"{champ_m.get('risk_adj_return', 0):.2f}",
-                                        f"${champ_m.get('avg_annual_premium', 0):,.0f}",
-                                        f"{champ_m.get('profitable_pct', 0):.0%}"
-                                    ],
-                                    'Challenger 1': [
-                                        f"{chall1_m.get('cumulative_roi', 0):.1%}",
-                                        f"{chall1_m.get('risk_adj_return', 0):.2f}",
-                                        f"${chall1_m.get('avg_annual_premium', 0):,.0f}",
-                                        f"{chall1_m.get('profitable_pct', 0):.0%}"
-                                    ],
-                                    'Challenger 2 (Naive)': [
-                                        f"{weather2_m.get('cumulative_roi', 0):.1%}",
-                                        f"{weather2_m.get('risk_adj_return', 0):.2f}",
-                                        f"${weather2_m.get('avg_annual_premium', 0):,.0f}",
-                                        f"{weather2_m.get('profitable_pct', 0):.0%}"
-                                    ],
-                                    'Challenger 3 (MVO)': [
-                                        f"{weather3_m.get('cumulative_roi', 0):.1%}",
-                                        f"{weather3_m.get('risk_adj_return', 0):.2f}",
-                                        f"${weather3_m.get('avg_annual_premium', 0):,.0f}",
-                                        f"{weather3_m.get('profitable_pct', 0):.0%}"
-                                    ]
-                                }
+                                    st.markdown("#### 4-Way Performance Comparison")
 
-                                st.table(pd.DataFrame(comparison_4way).set_index('Metric'))
+                                    champ_m = st.session_state.champion_results.get('metrics', {})
+                                    chall1_m = st.session_state.challenger_results.get('metrics', {})
+                                    weather2_m = st.session_state.weather_challenger_results.get('metrics', {})
+                                    weather3_m = weather3.get('metrics', {})
 
-                                # Winner determination
-                                all_rois = {
-                                    'Champion': champ_m.get('cumulative_roi', 0),
-                                    'Challenger 1': chall1_m.get('cumulative_roi', 0),
-                                    'Challenger 2 (Naive)': weather2_m.get('cumulative_roi', 0),
-                                    'Challenger 3 (MVO)': weather3_m.get('cumulative_roi', 0)
-                                }
-                                winner = max(all_rois, key=all_rois.get)
-                                winner_roi = all_rois[winner]
+                                    comparison_4way = {
+                                        'Metric': ['Cumulative ROI', 'Risk-Adjusted Return', 'Est. Annual Premium', 'Win Rate'],
+                                        'Champion': [
+                                            f"{champ_m.get('cumulative_roi', 0):.1%}",
+                                            f"{champ_m.get('risk_adj_return', 0):.2f}",
+                                            f"${champ_m.get('avg_annual_premium', 0):,.0f}",
+                                            f"{champ_m.get('profitable_pct', 0):.0%}"
+                                        ],
+                                        'Challenger 1': [
+                                            f"{chall1_m.get('cumulative_roi', 0):.1%}",
+                                            f"{chall1_m.get('risk_adj_return', 0):.2f}",
+                                            f"${chall1_m.get('avg_annual_premium', 0):,.0f}",
+                                            f"{chall1_m.get('profitable_pct', 0):.0%}"
+                                        ],
+                                        'Challenger 2 (Naive)': [
+                                            f"{weather2_m.get('cumulative_roi', 0):.1%}",
+                                            f"{weather2_m.get('risk_adj_return', 0):.2f}",
+                                            f"${weather2_m.get('avg_annual_premium', 0):,.0f}",
+                                            f"{weather2_m.get('profitable_pct', 0):.0%}"
+                                        ],
+                                        'Challenger 3 (MVO)': [
+                                            f"{weather3_m.get('cumulative_roi', 0):.1%}",
+                                            f"{weather3_m.get('risk_adj_return', 0):.2f}",
+                                            f"${weather3_m.get('avg_annual_premium', 0):,.0f}",
+                                            f"{weather3_m.get('profitable_pct', 0):.0%}"
+                                        ]
+                                    }
 
-                                if winner == 'Challenger 3 (MVO)':
-                                    st.success(f"**CHALLENGER 3 (MVO) WINS!** ROI: {winner_roi:.1%}")
-                                elif winner == 'Challenger 2 (Naive)':
-                                    st.success(f"**CHALLENGER 2 (NAIVE) WINS!** ROI: {winner_roi:.1%}")
-                                elif winner == 'Challenger 1':
-                                    st.success(f"**CHALLENGER 1 WINS!** ROI: {winner_roi:.1%}")
-                                else:
-                                    st.warning(f"**CHAMPION HOLDS!** ROI: {winner_roi:.1%}")
+                                    st.table(pd.DataFrame(comparison_4way).set_index('Metric'))
 
-                            # Acre Redistribution Analysis
-                            st.markdown("#### Acre Redistribution (MVO Impact)")
+                                    # Winner determination
+                                    all_rois = {
+                                        'Champion': champ_m.get('cumulative_roi', 0),
+                                        'Challenger 1': chall1_m.get('cumulative_roi', 0),
+                                        'Challenger 2 (Naive)': weather2_m.get('cumulative_roi', 0),
+                                        'Challenger 3 (MVO)': weather3_m.get('cumulative_roi', 0)
+                                    }
+                                    winner = max(all_rois, key=all_rois.get)
+                                    winner_roi = all_rois[winner]
 
-                            acre_comparison = []
-                            for gid in weather3['grids']:
-                                initial = weather3['initial_acres'].get(gid, 0)
-                                optimized = weather3['acres'].get(gid, 0)
-                                change = optimized - initial
-                                change_pct = (change / initial * 100) if initial > 0 else 0
+                                    if winner == 'Challenger 3 (MVO)':
+                                        st.success(f"**CHALLENGER 3 (MVO) WINS!** ROI: {winner_roi:.1%}")
+                                    elif winner == 'Challenger 2 (Naive)':
+                                        st.success(f"**CHALLENGER 2 (NAIVE) WINS!** ROI: {winner_roi:.1%}")
+                                    elif winner == 'Challenger 1':
+                                        st.success(f"**CHALLENGER 1 WINS!** ROI: {winner_roi:.1%}")
+                                    else:
+                                        st.warning(f"**CHAMPION HOLDS!** ROI: {winner_roi:.1%}")
 
-                                acre_comparison.append({
-                                    'Grid': gid,
-                                    'Initial Acres': f"{initial:,.0f}",
-                                    'Optimized Acres': f"{optimized:,.0f}",
-                                    'Change': f"{change:+,.0f}",
-                                    'Change %': f"{change_pct:+.1f}%"
-                                })
+                                # Acre Redistribution Analysis
+                                st.markdown("#### Acre Redistribution (MVO Impact)")
 
-                            acre_df = pd.DataFrame(acre_comparison)
-                            st.dataframe(acre_df, use_container_width=True, hide_index=True)
+                                acre_comparison = []
+                                for gid in weather3['grids']:
+                                    initial = weather3['initial_acres'].get(gid, 0)
+                                    optimized = weather3['acres'].get(gid, 0)
+                                    change = optimized - initial
+                                    change_pct = (change / initial * 100) if initial > 0 else 0
 
-                            # Analog Year Correlation Matrix
-                            if not weather3.get('analog_roi_correlation', pd.DataFrame()).empty:
-                                with st.expander("📉 Analog Year ROI Correlations", expanded=False):
-                                    st.caption("Correlations based on performance during analog years only. Lower = better diversification.")
+                                    acre_comparison.append({
+                                        'Grid': gid,
+                                        'Initial Acres': f"{initial:,.0f}",
+                                        'Optimized Acres': f"{optimized:,.0f}",
+                                        'Change': f"{change:+,.0f}",
+                                        'Change %': f"{change_pct:+.1f}%"
+                                    })
 
-                                    corr_df = weather3['analog_roi_correlation']
+                                acre_df = pd.DataFrame(acre_comparison)
+                                st.dataframe(acre_df, use_container_width=True, hide_index=True)
 
-                                    # Generate heatmap matching Historical Grid Correlations style
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    sns.heatmap(
-                                        corr_df,
-                                        annot=True,
-                                        cmap='RdYlGn_r',
-                                        fmt=".3f",
-                                        vmin=-1,
-                                        vmax=1,
-                                        center=0,
-                                        ax=ax,
-                                        square=True,
-                                        linewidths=0.5
-                                    )
-                                    ax.set_title("Analog Year ROI Correlations", fontsize=12)
-                                    plt.tight_layout()
+                                # Analog Year Correlation Matrix
+                                if not weather3.get('analog_roi_correlation', pd.DataFrame()).empty:
+                                    with st.expander("📉 Analog Year ROI Correlations", expanded=False):
+                                        st.caption("Correlations based on performance during analog years only. Lower = better diversification.")
 
-                                    st.pyplot(fig)
-                                    plt.close(fig)
+                                        corr_df = weather3['analog_roi_correlation']
 
-                            # Allocation Table
-                            st.markdown("#### Weather Challenger 3 Allocations")
-                            weather3_styled, weather3_alloc_df = create_optimized_allocation_table(
-                                weather3['allocations'],
-                                weather3['grids'],
-                                grid_acres=weather3['acres'],
-                                label="WEATHER MVO AVERAGE"
-                            )
-                            st.dataframe(weather3_styled, use_container_width=True, hide_index=True)
+                                        # Generate heatmap matching Historical Grid Correlations style
+                                        fig, ax = plt.subplots(figsize=(10, 6))
+                                        sns.heatmap(
+                                            corr_df,
+                                            annot=True,
+                                            cmap='RdYlGn_r',
+                                            fmt=".3f",
+                                            vmin=-1,
+                                            vmax=1,
+                                            center=0,
+                                            ax=ax,
+                                            square=True,
+                                            linewidths=0.5
+                                        )
+                                        ax.set_title("Analog Year ROI Correlations", fontsize=12)
+                                        plt.tight_layout()
 
-                            st.download_button(
-                                label="📥 Download Weather Challenger 3 CSV",
-                                data=weather3_alloc_df.to_csv(index=False),
-                                file_name="weather_challenger_3_allocations.csv",
-                                mime="text/csv",
-                                key="download_weather3_csv"
-                            )
+                                        st.pyplot(fig)
+                                        plt.close(fig)
+
+                                # Allocation Table
+                                st.markdown("#### Weather Challenger 3 Allocations")
+                                weather3_styled, weather3_alloc_df = create_optimized_allocation_table(
+                                    weather3['allocations'],
+                                    weather3['grids'],
+                                    grid_acres=weather3['acres'],
+                                    label="WEATHER MVO AVERAGE"
+                                )
+                                st.dataframe(weather3_styled, use_container_width=True, hide_index=True)
+
+                                st.download_button(
+                                    label="📥 Download Weather Challenger 3 CSV",
+                                    data=weather3_alloc_df.to_csv(index=False),
+                                    file_name="weather_challenger_3_allocations.csv",
+                                    mime="text/csv",
+                                    key="download_weather3_csv"
+                                )
 
                         # ==============================================================
                         # SCENARIO STRESS TEST
@@ -4691,18 +4733,25 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             analog_year_list_stress = [y['year'] for y in st.session_state.get('ps_analog_years', [])]
                             weather_config_stress = st.session_state.get('ps_weather_config', {})
 
-                            # Build scenario description for analog years
-                            enso_text_stress = weather_config_stress.get('enso_regime', 'Selected')
-                            context_text_stress = weather_config_stress.get('historical_context', '')
-                            analog_label = f"Analog Years Only ({enso_text_stress}"
-                            if context_text_stress and not context_text_stress.startswith('Any'):
-                                analog_label += f" + {context_text_stress}"
-                            analog_label += ")"
+                            # Build scenario description for analog years with ALL THREE criteria
+                            enso_text_stress = weather_config_stress.get('enso_regime', 'Any')
+                            context_text_stress = weather_config_stress.get('historical_context', 'Any')
+                            trend_text_stress = weather_config_stress.get('trajectory', 'Any')
+
+                            criteria_stress = []
+                            if enso_text_stress != 'Any':
+                                criteria_stress.append(enso_text_stress)
+                            if context_text_stress != 'Any':
+                                criteria_stress.append(context_text_stress)
+                            if trend_text_stress != 'Any':
+                                criteria_stress.append(trend_text_stress)
+
+                            analog_label = f"Analog Years Only ({' + '.join(criteria_stress)})" if criteria_stress else "Analog Years Only (All Conditions)"
 
                             stress_scenario = st.radio(
                                 "Select scenario to test:",
                                 options=[
-                                    "All Years (Current Results)",
+                                    "All Years (except Current Year)",
                                     "La Niña Years Only",
                                     "El Niño Years Only",
                                     "Neutral Years Only",
@@ -4724,7 +4773,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             if st.button("🔬 Run Stress Test", key="ps_run_stress_test", type="secondary"):
                                 # Map radio selection to scenario filter
                                 scenario_map = {
-                                    "All Years (Current Results)": "All Years (except Current Year)",
+                                    "All Years (except Current Year)": "All Years (except Current Year)",
                                     "La Niña Years Only": "ENSO Phase: La Nina",
                                     "El Niño Years Only": "ENSO Phase: El Nino",
                                     "Neutral Years Only": "ENSO Phase: Neutral",
@@ -4893,8 +4942,20 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 # Determine which weather challenger is better
                                 better_weather = "Challenger 3 (MVO)" if chall3_roi > chall2_roi else "Challenger 2 (Naive)"
 
-                                # Build insight message
-                                scenario_display = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "").replace("Years", "years")
+                                # Build insight message with full criteria for analog years
+                                if "Analog" in stress['scenario']:
+                                    # Use the full criteria label from weather config
+                                    config_insight = st.session_state.get('ps_weather_config', {})
+                                    criteria_insight = []
+                                    if config_insight.get('enso_regime', 'Any') != 'Any':
+                                        criteria_insight.append(config_insight.get('enso_regime'))
+                                    if config_insight.get('historical_context', 'Any') != 'Any':
+                                        criteria_insight.append(config_insight.get('historical_context'))
+                                    if config_insight.get('trajectory', 'Any') != 'Any':
+                                        criteria_insight.append(config_insight.get('trajectory'))
+                                    scenario_display = " + ".join(criteria_insight) if criteria_insight else "selected analog"
+                                else:
+                                    scenario_display = stress['scenario'].replace(" Only", "").replace(" (except Current Year)", "").replace("Years", "years")
 
                                 if weather_advantage_stress > weather_advantage_baseline + 0.02:  # Weather strategy shines
                                     insight_msg = f"""
@@ -6936,28 +6997,18 @@ def main():
     with st.sidebar.expander("📊 Z-Score Translation Key"):
         st.markdown("""
         **Historical Context (Current State):**
-        - **Dry**: Z < -0.25 (~40th percentile or below)
-        - **Normal**: -0.25 ≤ Z ≤ 0.25 (~40th-60th percentile)
-        - **Wet**: Z > 0.25 (~60th percentile or above)
+        - **Dry**: Z < -0.25
+        - **Normal**: -0.25 ≤ Z ≤ 0.25
+        - **Wet**: Z > 0.25
 
         **Trajectory (Expected Change):**
         - **Get Drier**: Δ < -0.05
         - **Stay Stable**: -0.05 ≤ Δ ≤ 0.05
         - **Get Wetter**: Δ > 0.05
 
-        **Percentile Reference:**
-        | Z-Score | Percentile |
-        |---------|------------|
-        | -1.0 | ~16th |
-        | -0.5 | ~31st |
-        | -0.25 | ~40th |
-        | 0.0 | 50th |
-        | +0.25 | ~60th |
-        | +0.5 | ~69th |
-        | +1.0 | ~84th |
-
         *Z-scores compare rainfall to historical average.*
-        *Trajectory = End-of-year minus Start-of-year Z-score.*
+
+        *Trajectory = Avg(Sep-Nov Z-scores) minus Avg(Jan-Mar Z-scores), then averaged across all grids in portfolio.*
         """)
 
     with st.sidebar.expander("🏆 Strategy Key"):
