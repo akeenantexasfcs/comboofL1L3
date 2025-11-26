@@ -135,10 +135,10 @@ st.set_page_config(layout="wide", page_title="PRF Backtesting Tool")
 
 @st.cache_data(ttl=3600)
 def load_distinct_grids(_session):
-    """Fetches the list of all available Grid IDs with county names from COUNTY_BASE_VALUES_PLATINUM."""
+    """Fetches the list of all available Grid IDs with county names from PRF_COUNTY_BASE_VALUES."""
     query = """
-        SELECT DISTINCT GRID_ID 
-        FROM CAPITAL_MARKETS_SANDBOX.PUBLIC.COUNTY_BASE_VALUES_PLATINUM
+        SELECT DISTINCT GRID_ID
+        FROM CAPITAL_MARKETS_SANDBOX.PUBLIC.PRF_COUNTY_BASE_VALUES
         ORDER BY GRID_ID
     """
     df = _session.sql(query).to_pandas()
@@ -192,8 +192,8 @@ def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_ye
 def load_county_base_value(_session, grid_id):
     """Fetches the average county base value for the grid using GRID_ID."""
     base_value_query = f"""
-        SELECT AVG(COUNTY_BASE_VALUE) 
-        FROM COUNTY_BASE_VALUES_PLATINUM 
+        SELECT AVG(COUNTY_BASE_VALUE)
+        FROM PRF_COUNTY_BASE_VALUES
         WHERE GRID_ID = '{grid_id}'
     """
     return float(_session.sql(base_value_query).to_pandas().iloc[0,0])
@@ -1418,145 +1418,7 @@ def render_allocation_inputs(key_prefix):
 
 
 # =============================================================================
-# === 3. TAB 1: SINGLE GRID ANALYSIS (S1) ===
-# =============================================================================
-def render_tab1(session, grid_id):
-    st.subheader("Parameters")
-    top_n = st.slider("Top N Riskiest Intervals", 1, 5, 2, key="s1_top_n")
-    
-    st.divider()
-
-    if 'tab1_run' not in st.session_state:
-        st.session_state.tab1_run = False
-
-    if st.button("Run Analysis", key="s1_run_button"):
-        st.session_state.tab1_run = True # Set flag to run
-        try:
-            # === 1. RUN ANALYSIS ===
-            with st.spinner(f"Loading data for Grid {grid_id}..."):
-                df = load_all_indices(session, grid_id)
-            
-            if df.empty:
-                st.error("No rainfall data available for this grid.")
-                return
-            
-            # --- Plot ---
-            try:
-                fig, ax = plt.subplots(figsize=(20, 6))
-                ax.plot(df['INDEX_VALUE'], color='#ff7c43', linewidth=2)
-                ax.set_xlabel('Interval', fontsize=12)
-                ax.set_ylabel('Rain Index', fontsize=12)
-                tick_spacing = 12
-                tick_positions = range(0, len(df), tick_spacing)
-                tick_labels = df['INTERVAL_MAPPING_TS_TEXT'].iloc[::tick_spacing]
-                ax.set_xticks(tick_positions)
-                ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
-                ax.grid(True, alpha=0.3)
-                plt.tight_layout()
-            except Exception as plot_error:
-                st.warning("Plot rendering encountered an issue, but data analysis will continue.")
-                fig = None
-            
-            # --- Summary Stats ---
-            thresholds = [90, 85, 80, 75, 70]
-            
-            # --- FORMAT OVERALL DROUGHT FREQUENCY AS TEXT TABLE ---
-            overall_table_output = []
-            overall_table_output.append("Overall Drought Frequency")
-            overall_table_output.append("="*60)
-            overall_table_output.append(f"{'Threshold':<15} {'Observations':<15} {'Frequency':<15}")
-            overall_table_output.append("-"*60)
-            
-            for threshold in thresholds:
-                count = (df['INDEX_VALUE'] < threshold).sum()
-                pct = count / len(df) * 100
-                overall_table_output.append(f"{'Below ' + str(threshold):<15} {count:<15} {pct:>6.1f}%")
-            
-            overall_table_output.append("="*60)
-            
-            # --- Drought Frequency Table ---
-            interval_summary = []
-            for interval in INTERVAL_ORDER_11:
-                interval_data = df[df['INTERVAL_NAME'] == interval]
-                total_obs = len(interval_data)
-                # Skip intervals with no data
-                if total_obs == 0:
-                    continue
-                row = {'Interval': interval, 'Total Obs': total_obs}
-                for threshold in thresholds:
-                    count = (interval_data['INDEX_VALUE'] < threshold).sum()
-                    pct = (count / total_obs * 100) if total_obs > 0 else 0
-                    row[f'<{threshold}_count'] = count
-                    row[f'<{threshold}_pct'] = pct
-                interval_summary.append(row)
-
-            markers = {}
-            for threshold in thresholds:
-                sorted_intervals = sorted(interval_summary, key=lambda x: x[f'<{threshold}_pct'], reverse=True)
-                top_n_list = [sorted_intervals[i]['Interval'] for i in range(min(top_n, len(sorted_intervals)))]
-                markers[threshold] = {'top_n': top_n_list}
-
-            table_output = []
-            header = f"{'Interval':<12} {'N':<5} " + "".join([f"{'<'+str(t):<15}" for t in thresholds])
-            table_output.append(header)
-            table_output.append("-"*90)
-            for row in interval_summary:
-                line = f"{row['Interval']:<12} {row['Total Obs']:<5} "
-                for threshold in thresholds:
-                    marker = "  "
-                    if row['Interval'] in markers[threshold]['top_n']: marker = " X"
-                    line += f"{row[f'<{threshold}_count']:>3} ({row[f'<{threshold}_pct']:>5.1f}%){marker} "
-                table_output.append(line)
-            table_output.append("="*90)
-            table_output.append(f"X = Top {top_n} highest drought frequency")
-            table_output.append("="*90 + "\n")
-            
-            # === 2. SAVE RESULTS TO SESSION STATE ===
-            st.session_state.tab1_results = {
-                "fig": fig, "grid_id": grid_id, "df": df,
-                "overall_table_output": "\n".join(overall_table_output),
-                "table_output": "\n".join(table_output)
-            }
-            # Clear other tab results
-            st.session_state.tab2_results = None
-            st.session_state.tab3_results = None
-            st.session_state.tab4_results = None
-            st.session_state.tab5_results = None
-
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
-            st.exception(e)
-            st.session_state.tab1_results = None
-
-    # === 3. DISPLAY RESULTS (if they exist) ===
-    if 'tab1_results' in st.session_state and st.session_state.tab1_results:
-        try:
-            results = st.session_state.tab1_results
-            
-            if results['fig'] is not None:
-                st.subheader(f"Rainfall Index Over Time - Grid {results['grid_id']}")
-                st.pyplot(results['fig'])
-            
-            st.subheader(f"Grid {results['grid_id']} - Rainfall Index Summary")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Observations", f"{len(results['df'])}")
-            col2.metric("Date Range", f"{results['df']['INTERVAL_MAPPING_TS_TEXT'].min()} to {results['df']['INTERVAL_MAPPING_TS_TEXT'].max()}")
-            col3.metric("Index Range", f"{results['df']['INDEX_VALUE'].min():.1f} to {results['df']['INDEX_VALUE'].max():.1f}")
-            
-            st.subheader("Overall Drought Frequency")
-            st.text(results['overall_table_output'])
-            
-            st.subheader("Drought Frequency by Interval")
-            st.text(results['table_output'])
-        except Exception as e:
-            st.error(f"An error occurred displaying Tab 1 results: {e}")
-            st.session_state.tab1_results = None
-    elif not st.session_state.tab1_run:
-        st.info("Click 'Run Analysis' to see results.")
-
-
-# =============================================================================
-# === 4. TAB 2: TFC DECISION SUPPORT TOOL (S2) ===
+# === 3. TAB 1: TFC DECISION SUPPORT TOOL (S2) ===
 # =============================================================================
 def render_tab2(session, grid_id, intended_use, productivity_factor, total_insured_acres, plan_code):
     st.subheader("Parameters")
@@ -1622,11 +1484,9 @@ def render_tab2(session, grid_id, intended_use, productivity_factor, total_insur
                 "subsidy_percent": subsidy_percent
             }
             # Clear other tab results
-            st.session_state.tab1_results = None
-            st.session_state.tab3_results = None
             st.session_state.tab4_results = None
             st.session_state.tab5_results = None
-            
+
         except Exception as e:
             st.error(f"An error occurred: {e}")
             st.exception(e)
@@ -3604,9 +3464,7 @@ def render_tab5(session, grid_id, intended_use, productivity_factor, total_insur
                 "scenario": selected_scenario,
                 "years_used": sorted(years_used)
             }
-            st.session_state.tab1_results = None
             st.session_state.tab2_results = None
-            st.session_state.tab3_results = None
             st.session_state.tab4_results = None
 
         except Exception as e:
@@ -4420,11 +4278,9 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                 "stage2_info": stage2_info,
                 "roi_correlation_matrix": roi_correlation_matrix
             }
-            st.session_state.tab1_results = None
             st.session_state.tab2_results = None
-            st.session_state.tab3_results = None
             st.session_state.tab5_results = None
-            
+
         except Exception as e:
             st.error(f"Error: {e}")
             st.exception(e)
@@ -5114,23 +4970,15 @@ def main():
     if 'insurance_plan_code' not in st.session_state:
         st.session_state.insurance_plan_code = 13
     
-    if 'tab1_run' not in st.session_state:
-        st.session_state.tab1_run = False
     if 'tab2_run' not in st.session_state:
         st.session_state.tab2_run = False
-    if 'tab3_run' not in st.session_state:
-        st.session_state.tab3_run = False
     if 'tab4_run' not in st.session_state:
         st.session_state.tab4_run = False
     if 'tab5_run' not in st.session_state:
         st.session_state.tab5_run = False
 
-    if 'tab1_results' not in st.session_state:
-        st.session_state.tab1_results = None
     if 'tab2_results' not in st.session_state:
         st.session_state.tab2_results = None
-    if 'tab3_results' not in st.session_state:
-        st.session_state.tab3_results = None
     if 'tab4_results' not in st.session_state:
         st.session_state.tab4_results = None
     if 'tab5_results' not in st.session_state:
@@ -5186,24 +5034,16 @@ def main():
     st.sidebar.caption("*2025 Rates are used for this application")
     st.sidebar.caption("*Common Parameters are secondary to parameters on each tab")
     
-    tab1, tab2, tab_portfolio, tab_strategy = st.tabs([
-        "Grid Analysis",
+    tab1, tab2 = st.tabs([
         "Decision Support",
-        "Portfolio Backtest",
-        "Champion vs Challenger"
+        "Portfolio Backtest"
     ])
 
     with tab1:
-        render_tab1(session, grid_id)
-
-    with tab2:
         render_tab2(session, grid_id, intended_use, productivity_factor, total_insured_acres, plan_code)
 
-    with tab_portfolio:
+    with tab2:
         render_tab5(session, grid_id, intended_use, productivity_factor, total_insured_acres, plan_code)
-
-    with tab_strategy:
-        render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_factor, total_insured_acres, plan_code)
 
 if __name__ == "__main__":
     main()
