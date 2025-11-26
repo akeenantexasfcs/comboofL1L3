@@ -8,6 +8,13 @@ import seaborn as sns
 import streamlit as st
 from scipy.optimize import minimize
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime
+from io import BytesIO
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.section import WD_ORIENT
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # === ROUNDING AND PRECISION HELPERS ===
 def round_half_up(value, decimals=2):
@@ -2117,6 +2124,152 @@ def optimize_without_budget(
     except Exception as e:
         # Fallback to uniform
         return {gid: max_total_acres / len(selected_grids) for gid in selected_grids}
+
+
+def generate_strategy_report_docx(
+    comparison_df, stress_scenario, start_year, end_year, coverage_level,
+    productivity_factor, intended_use, analog_years_count, weather_config
+):
+    """
+    Generate a Word document with strategy comparison report.
+    Returns BytesIO buffer with the document.
+    """
+    doc = Document()
+
+    # Set landscape orientation
+    section = doc.sections[0]
+    new_width, new_height = section.page_height, section.page_width
+    section.orientation = WD_ORIENT.LANDSCAPE
+    section.page_width = new_width
+    section.page_height = new_height
+
+    # Title
+    title = doc.add_heading('PRF Strategy Comparison Report', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Subtitle with metadata
+    subtitle = doc.add_paragraph()
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    subtitle.add_run(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n").bold = False
+    subtitle.add_run(f"Scenario: {stress_scenario}\n")
+    subtitle.add_run(f"Year Range: {start_year} - {end_year}")
+
+    doc.add_paragraph()
+
+    # --- Performance Comparison Table ---
+    doc.add_heading('Performance Comparison', level=1)
+
+    # Create table from comparison_df
+    table = doc.add_table(rows=1, cols=len(comparison_df.columns))
+    table.style = 'Table Grid'
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # Header row
+    hdr_cells = table.rows[0].cells
+    for idx, col in enumerate(comparison_df.columns):
+        hdr_cells[idx].text = col
+        for paragraph in hdr_cells[idx].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
+    # Data rows
+    for _, row in comparison_df.iterrows():
+        row_cells = table.add_row().cells
+        for idx, val in enumerate(row):
+            row_cells[idx].text = str(val)
+
+    doc.add_paragraph()
+
+    # --- Helper function to add allocation table ---
+    def add_allocation_table(doc, title, results_data, results_key):
+        """Add an allocation table for a strategy."""
+        if results_key not in st.session_state or not st.session_state[results_key]:
+            doc.add_heading(f'{title} - No data available', level=1)
+            return
+
+        data = st.session_state[results_key]
+        allocations = data.get('allocations', {})
+        acres = data.get('acres', {})
+        grids = data.get('grids', [])
+
+        if not grids:
+            doc.add_heading(f'{title} - No grids', level=1)
+            return
+
+        doc.add_heading(title, level=1)
+
+        # Create table: Grid | Jan-Feb | Feb-Mar | ... | Nov-Dec | Acres
+        headers = ['Grid'] + INTERVAL_ORDER_11 + ['Acres']
+        table = doc.add_table(rows=1, cols=len(headers))
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # Header row
+        hdr_cells = table.rows[0].cells
+        for idx, col in enumerate(headers):
+            hdr_cells[idx].text = col
+            for paragraph in hdr_cells[idx].paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
+                    run.font.size = Pt(8)
+
+        # Data rows
+        for gid in grids:
+            row_cells = table.add_row().cells
+            row_cells[0].text = str(gid)
+            alloc = allocations.get(gid, {})
+            for idx, interval in enumerate(INTERVAL_ORDER_11):
+                pct = alloc.get(interval, 0)
+                row_cells[idx + 1].text = f"{pct*100:.0f}%" if pct > 0 else "-"
+            row_cells[len(INTERVAL_ORDER_11) + 1].text = f"{acres.get(gid, 0):,.0f}"
+
+        doc.add_paragraph()
+
+    # --- Add allocation tables for each strategy ---
+    add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
+    add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
+    add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
+    add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
+
+    # --- Footnotes Section ---
+    doc.add_heading('Footnotes', level=1)
+
+    footnotes = doc.add_paragraph()
+    footnotes.add_run("Custom Range: ").bold = True
+    footnotes.add_run(f"{start_year} - {end_year}\n")
+
+    # Analog years criteria
+    if weather_config:
+        criteria_parts = []
+        if weather_config.get('enso_regime', 'Any') != 'Any':
+            criteria_parts.append(weather_config.get('enso_regime'))
+        if weather_config.get('historical_context', 'Any') != 'Any':
+            criteria_parts.append(weather_config.get('historical_context'))
+        if weather_config.get('trajectory', 'Any') != 'Any':
+            criteria_parts.append(weather_config.get('trajectory'))
+
+        footnotes.add_run("Analog Years Criteria: ").bold = True
+        footnotes.add_run(f"{' + '.join(criteria_parts) if criteria_parts else 'All Conditions'}\n")
+
+    if analog_years_count:
+        footnotes.add_run("Number of Analog Years: ").bold = True
+        footnotes.add_run(f"{analog_years_count}\n")
+
+    footnotes.add_run("Coverage Level: ").bold = True
+    footnotes.add_run(f"{coverage_level:.0%}\n")
+
+    footnotes.add_run("Productivity Factor: ").bold = True
+    footnotes.add_run(f"{productivity_factor:.2f}\n")
+
+    footnotes.add_run("Intended Use: ").bold = True
+    footnotes.add_run(f"{intended_use}\n")
+
+    # Save to BytesIO buffer
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    return buffer
 
 
 def render_allocation_inputs(key_prefix):
@@ -5168,15 +5321,43 @@ Your weather strategy appears robust and not overly dependent on specific condit
 Consider whether your conviction in the La Nina thesis justifies this downside risk.
 """)
 
-                                # Download button for stress test
-                                stress_csv = comparison_df.to_csv(index=False)
-                                st.download_button(
-                                    label="📥 Download Stress Test Results",
-                                    data=stress_csv,
-                                    file_name=f"stress_test_{stress['scenario'].replace(' ', '_').lower()}.csv",
-                                    mime="text/csv",
-                                    key="download_stress_csv"
-                                )
+                                # Download buttons for stress test
+                                download_col1, download_col2 = st.columns(2)
+
+                                with download_col1:
+                                    stress_csv = comparison_df.to_csv(index=False)
+                                    st.download_button(
+                                        label="📥 Download Stress Test Results",
+                                        data=stress_csv,
+                                        file_name=f"stress_test_{stress['scenario'].replace(' ', '_').lower()}.csv",
+                                        mime="text/csv",
+                                        key="download_stress_csv"
+                                    )
+
+                                with download_col2:
+                                    # Generate Word report
+                                    weather_config = st.session_state.get('ps_weather_config', {})
+                                    analog_count = stress.get('analog_years_count')
+
+                                    docx_buffer = generate_strategy_report_docx(
+                                        comparison_df=comparison_df,
+                                        stress_scenario=stress['scenario'],
+                                        start_year=start_year,
+                                        end_year=end_year,
+                                        coverage_level=coverage_level,
+                                        productivity_factor=productivity_factor,
+                                        intended_use=intended_use,
+                                        analog_years_count=analog_count,
+                                        weather_config=weather_config
+                                    )
+
+                                    st.download_button(
+                                        label="📄 Export Strategy Report (Word)",
+                                        data=docx_buffer,
+                                        file_name=f"prf_strategy_report_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        key="download_strategy_docx"
+                                    )
 
                     elif 'ps_analog_years' in st.session_state:
                         st.warning("No analog years found matching your criteria. Try broadening your market view (e.g., set some filters to 'Any').")
