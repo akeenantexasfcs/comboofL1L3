@@ -76,9 +76,9 @@ HISTORICAL_CONTEXT_MAP = {
 }
 
 TREND_MAP = {
-    'Get Drier': {'min': float('-inf'), 'max': -0.2},
-    'Stay Stable': {'min': -0.2, 'max': 0.2},
-    'Get Wetter': {'min': 0.2, 'max': float('inf')}
+    'Get Drier': {'min': float('-inf'), 'max': -0.05},
+    'Stay Stable': {'min': -0.05, 'max': 0.05},
+    'Get Wetter': {'min': 0.05, 'max': float('inf')}
 }
 
 # === KING RANCH PRESET CONFIGURATION (CORRECTED COUNTY MAPPINGS) ===
@@ -343,18 +343,14 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
 
         # Historical context filter (based on portfolio average Z)
         if hist_context != 'Any':
-            # Parse the selection to get the key
-            context_key = hist_context.split(' ')[0]  # "Dry", "Normal", or "Wet"
-            context_bounds = HISTORICAL_CONTEXT_MAP.get(context_key, None)
+            context_bounds = HISTORICAL_CONTEXT_MAP.get(hist_context, None)
             if context_bounds:
                 if not (context_bounds['min'] <= portfolio_avg_z < context_bounds['max']):
                     continue
 
         # Trajectory filter
         if trend != 'Any':
-            # Parse the selection to get the key
-            trend_key = trend.split(' ')[0] + ' ' + trend.split(' ')[1]  # "Get Drier", "Stay Stable", "Get Wetter"
-            trend_bounds = TREND_MAP.get(trend_key, None)
+            trend_bounds = TREND_MAP.get(trend, None)
             if trend_bounds:
                 if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
                     continue
@@ -3521,12 +3517,11 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         champ_roi = champ_metrics.get('cumulative_roi', 0)
 
         if chall_roi > champ_roi:
-            improvement = ((chall_roi - champ_roi) / abs(champ_roi) * 100) if champ_roi != 0 else 0
-            st.success(f"**CHALLENGER WINS!** ROI improved by {improvement:.1f}%")
+            st.success("**CHALLENGER WINS!**")
         elif chall_roi < champ_roi:
-            st.warning("**Champion holds!** The baseline strategy performed better.")
+            st.warning("**CHAMPION HOLDS!**")
         else:
-            st.info("**TIE!** Both strategies performed equally.")
+            st.info("**TIE!**")
 
         # === ALLOCATION COMPARISON: VERTICAL STACK (Styled DataFrames with Downloads) ===
         st.markdown("#### Interval Allocation Comparison")
@@ -3665,8 +3660,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                 with mv_col2:
                     historical_context = st.selectbox(
-                        "Historical Context (Z-Score)",
-                        options=["Dry (< -0.25)", "Normal (-0.25 to +0.25)", "Wet (> +0.25)", "Any"],
+                        "Historical Context",
+                        options=["Dry", "Normal", "Wet", "Any"],
                         index=0,
                         key="ps_weather_hist_context"
                     )
@@ -3674,7 +3669,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col3:
                     trajectory = st.selectbox(
                         "Expected Trajectory",
-                        options=["Get Drier (< -0.2)", "Stay Stable (-0.2 to +0.2)", "Get Wetter (> +0.2)", "Any"],
+                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any"],
                         index=0,
                         key="ps_weather_trajectory"
                     )
@@ -3940,7 +3935,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         # --- Interval Strategy ---
                         st.markdown("**Interval Strategy**")
 
-                        weather3_iteration_map = {'Fast': 500, 'Standard': 2000, 'Thorough': 5000, 'Maximum': 10000}
+                        weather3_iteration_map = {'Fast': 500, 'Standard': 3000, 'Thorough': 7000, 'Maximum': 15000}
                         weather3_search_depth_key = st.select_slider(
                             "Search Depth",
                             options=list(weather3_iteration_map.keys()),
@@ -4375,10 +4370,26 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 st.caption("Correlations based on performance during analog years only. Lower = better diversification.")
 
                                 corr_df = weather3['analog_roi_correlation']
-                                st.dataframe(
-                                    corr_df.style.format("{:.3f}").background_gradient(cmap='RdYlGn_r', vmin=-1, vmax=1),
-                                    use_container_width=True
+
+                                # Generate heatmap matching Historical Grid Correlations style
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                sns.heatmap(
+                                    corr_df,
+                                    annot=True,
+                                    cmap='RdYlGn_r',
+                                    fmt=".3f",
+                                    vmin=-1,
+                                    vmax=1,
+                                    center=0,
+                                    ax=ax,
+                                    square=True,
+                                    linewidths=0.5
                                 )
+                                ax.set_title("Analog Year ROI Correlations", fontsize=12)
+                                plt.tight_layout()
+
+                                st.pyplot(fig)
+                                plt.close(fig)
 
                             # Allocation Table
                             st.markdown("#### Weather Challenger 3 Allocations")
@@ -6384,14 +6395,25 @@ def main():
     with st.sidebar.expander("📊 Z-Score Translation Key"):
         st.markdown("""
         **Historical Context (Current State):**
-        - **Dry**: Z < -0.25 (drier than normal)
-        - **Normal**: -0.25 ≤ Z ≤ 0.25
-        - **Wet**: Z > 0.25 (wetter than normal)
+        - **Dry**: Z < -0.25 (~40th percentile or below)
+        - **Normal**: -0.25 ≤ Z ≤ 0.25 (~40th-60th percentile)
+        - **Wet**: Z > 0.25 (~60th percentile or above)
 
         **Trajectory (Expected Change):**
-        - **Get Drier**: Δ < -0.2
-        - **Stay Stable**: -0.2 ≤ Δ ≤ 0.2
-        - **Get Wetter**: Δ > 0.2
+        - **Get Drier**: Δ < -0.05
+        - **Stay Stable**: -0.05 ≤ Δ ≤ 0.05
+        - **Get Wetter**: Δ > 0.05
+
+        **Percentile Reference:**
+        | Z-Score | Percentile |
+        |---------|------------|
+        | -1.0 | ~16th |
+        | -0.5 | ~31st |
+        | -0.25 | ~40th |
+        | 0.0 | 50th |
+        | +0.25 | ~60th |
+        | +0.5 | ~69th |
+        | +1.0 | ~84th |
 
         *Z-scores compare rainfall to historical average.*
         *Trajectory = End-of-year minus Start-of-year Z-score.*
@@ -6415,6 +6437,34 @@ def main():
     st.sidebar.divider()
     st.sidebar.caption("*2025 Rates are used for this application")
     st.sidebar.caption("*Common Parameters are secondary to parameters on each tab")
+
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Clear Champion vs Challenger", key="clear_champ_chall"):
+        # Clear all Champion vs Challenger session state
+        keys_to_clear = [
+            'champion_results',
+            'challenger_results',
+            'weather_challenger_results',
+            'weather_challenger_3_results',
+            'ps_analog_years',
+            'ps_weather_config',
+            'ps_enable_weather',
+            'ps_kr_load_requested',
+            'ps_acres_expander_opened',
+            'ps_alloc_expander_opened'
+        ]
+
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        # Also clear any ps_ prefixed keys for grid allocations/acres
+        keys_to_remove = [k for k in st.session_state.keys() if k.startswith('ps_')]
+        for key in keys_to_remove:
+            del st.session_state[key]
+
+        st.sidebar.success("Champion vs Challenger cleared!")
+        st.rerun()
     
     tab1, tab2, tab3 = st.tabs([
         "Decision Support (Audit)",
