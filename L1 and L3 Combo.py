@@ -6425,6 +6425,34 @@ def main():
     st.sidebar.divider()
     st.sidebar.caption("*2025 Rates are used for this application")
     st.sidebar.caption("*Common Parameters are secondary to parameters on each tab")
+
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Clear Champion vs Challenger", key="clear_champ_chall"):
+        # Clear all Champion vs Challenger session state
+        keys_to_clear = [
+            'champion_results',
+            'challenger_results',
+            'weather_challenger_results',
+            'weather_challenger_3_results',
+            'ps_analog_years',
+            'ps_weather_config',
+            'ps_enable_weather',
+            'ps_kr_load_requested',
+            'ps_acres_expander_opened',
+            'ps_alloc_expander_opened'
+        ]
+
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        # Also clear any ps_ prefixed keys for grid allocations/acres
+        keys_to_remove = [k for k in st.session_state.keys() if k.startswith('ps_')]
+        for key in keys_to_remove:
+            del st.session_state[key]
+
+        st.sidebar.success("Champion vs Challenger cleared!")
+        st.rerun()
     
     tab1, tab2, tab3 = st.tabs([
         "Decision Support (Audit)",
