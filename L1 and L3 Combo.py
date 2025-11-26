@@ -294,10 +294,13 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
                 year_phases.append(dominant_phase)
 
             # Calculate trajectory (EOY - SOY)
-            # SOY = intervals 1,2,3 (Jan-Feb, Feb-Mar, Mar-Apr)
-            # EOY = intervals 9,10,11 (Sep-Oct, Oct-Nov, Nov-Dec)
-            soy_df = year_df[year_df['INTERVAL_CODE'].isin([1, 2, 3])]
-            eoy_df = year_df[year_df['INTERVAL_CODE'].isin([9, 10, 11])]
+            # SOY = Start of Year (Jan-Feb, Feb-Mar, Mar-Apr)
+            # EOY = End of Year (Sep-Oct, Oct-Nov, Nov-Dec)
+            soy_intervals = ['Jan-Feb', 'Feb-Mar', 'Mar-Apr']
+            eoy_intervals = ['Sep-Oct', 'Oct-Nov', 'Nov-Dec']
+
+            soy_df = year_df[year_df['INTERVAL_NAME'].isin(soy_intervals)]
+            eoy_df = year_df[year_df['INTERVAL_NAME'].isin(eoy_intervals)]
 
             soy_z = soy_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
             eoy_z = eoy_df['SEQUENTIAL_Z_SCORE_HISTORICAL_RECORD'].dropna()
