@@ -4491,6 +4491,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         for gid in weather_grids_gen:
                                             allocation = weather3_allocations.get(gid, {})
                                             if not allocation:
+                                                st.warning(f"Grid {gid} skipped: empty allocation from Stage 1")
                                                 continue
 
                                             try:
@@ -4536,6 +4537,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                     analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
 
                                             except Exception as e:
+                                                st.warning(f"Grid {gid} skipped: {e}")
                                                 continue
 
                                         if len(analog_roi_data) > 0:
@@ -4785,7 +4787,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         sns.heatmap(
                                             corr_df,
                                             annot=True,
-                                            cmap='RdYlGn_r',
+                                            cmap='RdYlGn',
                                             fmt=".3f",
                                             vmin=-1,
                                             vmax=1,
