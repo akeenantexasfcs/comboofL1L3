@@ -6383,14 +6383,25 @@ def main():
     with st.sidebar.expander("📊 Z-Score Translation Key"):
         st.markdown("""
         **Historical Context (Current State):**
-        - **Dry**: Z < -0.25 (drier than normal)
-        - **Normal**: -0.25 ≤ Z ≤ 0.25
-        - **Wet**: Z > 0.25 (wetter than normal)
+        - **Dry**: Z < -0.25 (~40th percentile or below)
+        - **Normal**: -0.25 ≤ Z ≤ 0.25 (~40th-60th percentile)
+        - **Wet**: Z > 0.25 (~60th percentile or above)
 
         **Trajectory (Expected Change):**
-        - **Get Drier**: Δ < -0.2
-        - **Stay Stable**: -0.2 ≤ Δ ≤ 0.2
-        - **Get Wetter**: Δ > 0.2
+        - **Get Drier**: Δ < -0.05
+        - **Stay Stable**: -0.05 ≤ Δ ≤ 0.05
+        - **Get Wetter**: Δ > 0.05
+
+        **Percentile Reference:**
+        | Z-Score | Percentile |
+        |---------|------------|
+        | -1.0 | ~16th |
+        | -0.5 | ~31st |
+        | -0.25 | ~40th |
+        | 0.0 | 50th |
+        | +0.25 | ~60th |
+        | +0.5 | ~69th |
+        | +1.0 | ~84th |
 
         *Z-scores compare rainfall to historical average.*
         *Trajectory = End-of-year minus Start-of-year Z-score.*
