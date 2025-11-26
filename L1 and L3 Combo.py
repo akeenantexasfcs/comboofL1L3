@@ -5007,6 +5007,335 @@ Consider whether your conviction in the La Niña thesis justifies this downside 
                     elif 'ps_analog_years' in st.session_state:
                         st.warning("No analog years found matching your criteria. Try broadening your market view (e.g., set some filters to 'Any').")
 
+        # ==========================================================================
+        # AGGREGATE PORTFOLIO DETAILS (Audit View)
+        # ==========================================================================
+        st.divider()
+        st.markdown("### 📂 Aggregate Portfolio Details (Audit View)")
+        st.caption("Complete year-by-year data for all strategies. Updates as you run each portfolio.")
+
+        # Collect data from all available portfolios
+        all_portfolio_data = []
+
+        # Helper function to format allocation as string
+        def format_allocation_string(alloc_dict):
+            """Convert allocation dict to readable string like 'Jan-Feb: 20%, Mar-Apr: 30%'"""
+            if not alloc_dict:
+                return "N/A"
+            parts = [f"{k}: {v*100:.0f}%" for k, v in sorted(alloc_dict.items(), key=lambda x: INTERVAL_ORDER_11.index(x[0])) if v > 0]
+            return ", ".join(parts) if parts else "N/A"
+
+        # --- Champion Data ---
+        if 'champion_results' in st.session_state and st.session_state.champion_results:
+            champ_data = st.session_state.champion_results
+            champ_grids = champ_data.get('grids', [])
+            champ_allocs = champ_data.get('allocations', {})
+            champ_acres = champ_data.get('acres', {})
+            champ_grid_results = champ_data.get('grid_results', {})
+
+            for gid in champ_grids:
+                if gid in champ_grid_results:
+                    grid_result = champ_grid_results[gid]
+                    if 'year_results' in grid_result and isinstance(grid_result['year_results'], pd.DataFrame):
+                        year_df = grid_result['year_results'].copy()
+                        year_df['Portfolio'] = 'Champion'
+                        year_df['Grid'] = gid
+                        year_df['Allocation'] = format_allocation_string(champ_allocs.get(gid, {}))
+                        year_df['Acres'] = champ_acres.get(gid, 0)
+                        all_portfolio_data.append(year_df)
+
+        # --- Challenger 1 Data ---
+        if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+            chall1_data = st.session_state.challenger_results
+            chall1_grids = chall1_data.get('grids', [])
+            chall1_allocs = chall1_data.get('allocations', {})
+            chall1_acres = chall1_data.get('acres', {})
+            chall1_grid_results = chall1_data.get('grid_results', {})
+
+            for gid in chall1_grids:
+                if gid in chall1_grid_results:
+                    grid_result = chall1_grid_results[gid]
+                    if 'year_results' in grid_result and isinstance(grid_result['year_results'], pd.DataFrame):
+                        year_df = grid_result['year_results'].copy()
+                        year_df['Portfolio'] = 'Challenger 1'
+                        year_df['Grid'] = gid
+                        year_df['Allocation'] = format_allocation_string(chall1_allocs.get(gid, {}))
+                        year_df['Acres'] = chall1_acres.get(gid, 0)
+                        all_portfolio_data.append(year_df)
+
+        # --- Challenger 2 (Weather Naive) Data ---
+        if 'weather_challenger_results' in st.session_state and st.session_state.weather_challenger_results:
+            chall2_data = st.session_state.weather_challenger_results
+            chall2_grids = chall2_data.get('grids', [])
+            chall2_allocs = chall2_data.get('allocations', {})
+            chall2_acres = chall2_data.get('acres', {})
+
+            # Weather Challenger 2 stores results differently - need to recalculate or extract from df
+            chall2_df = chall2_data.get('df', pd.DataFrame())
+            if not chall2_df.empty:
+                # The df has portfolio-level results, we need grid-level
+                # Re-run calculation to get grid-level detail
+                for gid in chall2_grids:
+                    try:
+                        allocation = chall2_allocs.get(gid, {})
+                        acres = chall2_acres.get(gid, 0)
+
+                        if not allocation:
+                            continue
+
+                        subsidy_percent = load_subsidies(session, plan_code, [coverage_level])[coverage_level]
+                        county_base_value = load_county_base_value(session, gid)
+                        current_rate_year = get_current_rate_year(session)
+                        premium_rates_df = load_premium_rates(session, gid, intended_use, [coverage_level], current_rate_year)[coverage_level]
+                        dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
+                        total_protection = dollar_protection * acres
+
+                        all_indices_df = load_all_indices(session, gid)
+                        all_indices_df = all_indices_df[(all_indices_df['YEAR'] >= start_year) & (all_indices_df['YEAR'] <= end_year)]
+
+                        year_results = []
+                        for year in sorted(all_indices_df['YEAR'].unique()):
+                            year_data = all_indices_df[all_indices_df['YEAR'] == year]
+                            if year_data.empty:
+                                continue
+
+                            total_indemnity = 0
+                            total_producer_premium = 0
+
+                            for interval, pct in allocation.items():
+                                if pct == 0:
+                                    continue
+
+                                index_row = year_data[year_data['INTERVAL_NAME'] == interval]
+                                index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
+
+                                premium_rate = premium_rates_df.get(interval, 0)
+                                interval_protection = round_half_up(total_protection * pct, 0)
+                                total_premium = round_half_up(interval_protection * premium_rate, 0)
+                                premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
+                                producer_premium = total_premium - premium_subsidy
+
+                                trigger = coverage_level * 100
+                                shortfall_pct = max(0, (trigger - index_value) / trigger)
+                                indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+
+                                total_indemnity += indemnity
+                                total_producer_premium += producer_premium
+
+                            net_return = total_indemnity - total_producer_premium
+                            roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
+
+                            year_results.append({
+                                'year': year,
+                                'indemnity': total_indemnity,
+                                'premium': total_producer_premium,
+                                'net': net_return,
+                                'roi': roi
+                            })
+
+                        if year_results:
+                            year_df = pd.DataFrame(year_results)
+                            year_df['Portfolio'] = 'Challenger 2 (Weather)'
+                            year_df['Grid'] = gid
+                            year_df['Allocation'] = format_allocation_string(allocation)
+                            year_df['Acres'] = acres
+                            all_portfolio_data.append(year_df)
+
+                    except Exception as e:
+                        continue
+
+        # --- Challenger 3 (Weather MVO) Data ---
+        if 'weather_challenger_3_results' in st.session_state and st.session_state.weather_challenger_3_results:
+            chall3_data = st.session_state.weather_challenger_3_results
+            chall3_grids = chall3_data.get('grids', [])
+            chall3_allocs = chall3_data.get('allocations', {})
+            chall3_acres = chall3_data.get('acres', {})
+
+            for gid in chall3_grids:
+                try:
+                    allocation = chall3_allocs.get(gid, {})
+                    acres = chall3_acres.get(gid, 0)
+
+                    if not allocation:
+                        continue
+
+                    subsidy_percent = load_subsidies(session, plan_code, [coverage_level])[coverage_level]
+                    county_base_value = load_county_base_value(session, gid)
+                    current_rate_year = get_current_rate_year(session)
+                    premium_rates_df = load_premium_rates(session, gid, intended_use, [coverage_level], current_rate_year)[coverage_level]
+                    dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
+                    total_protection = dollar_protection * acres
+
+                    all_indices_df = load_all_indices(session, gid)
+                    all_indices_df = all_indices_df[(all_indices_df['YEAR'] >= start_year) & (all_indices_df['YEAR'] <= end_year)]
+
+                    year_results = []
+                    for year in sorted(all_indices_df['YEAR'].unique()):
+                        year_data = all_indices_df[all_indices_df['YEAR'] == year]
+                        if year_data.empty:
+                            continue
+
+                        total_indemnity = 0
+                        total_producer_premium = 0
+
+                        for interval, pct in allocation.items():
+                            if pct == 0:
+                                continue
+
+                            index_row = year_data[year_data['INTERVAL_NAME'] == interval]
+                            index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
+
+                            premium_rate = premium_rates_df.get(interval, 0)
+                            interval_protection = round_half_up(total_protection * pct, 0)
+                            total_premium = round_half_up(interval_protection * premium_rate, 0)
+                            premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
+                            producer_premium = total_premium - premium_subsidy
+
+                            trigger = coverage_level * 100
+                            shortfall_pct = max(0, (trigger - index_value) / trigger)
+                            indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+
+                            total_indemnity += indemnity
+                            total_producer_premium += producer_premium
+
+                        net_return = total_indemnity - total_producer_premium
+                        roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
+
+                        year_results.append({
+                            'year': year,
+                            'indemnity': total_indemnity,
+                            'premium': total_producer_premium,
+                            'net': net_return,
+                            'roi': roi
+                        })
+
+                    if year_results:
+                        year_df = pd.DataFrame(year_results)
+                        year_df['Portfolio'] = 'Challenger 3 (MVO)'
+                        year_df['Grid'] = gid
+                        year_df['Allocation'] = format_allocation_string(allocation)
+                        year_df['Acres'] = acres
+                        all_portfolio_data.append(year_df)
+
+                except Exception as e:
+                    continue
+
+        # --- Combine and Display ---
+        if all_portfolio_data:
+            master_audit_df = pd.concat(all_portfolio_data, ignore_index=True)
+
+            # Standardize column names
+            column_rename = {
+                'year': 'Year',
+                'indemnity': 'Total Indemnity',
+                'premium': 'Producer Premium',
+                'net': 'Net Return',
+                'roi': 'Total ROI'
+            }
+            master_audit_df = master_audit_df.rename(columns=column_rename)
+
+            # Reorder columns: Portfolio, Grid, Year, Allocation, Acres, financials
+            column_order = ['Portfolio', 'Grid', 'Year', 'Allocation', 'Acres',
+                           'Total Indemnity', 'Producer Premium', 'Net Return', 'Total ROI']
+
+            # Only include columns that exist
+            column_order = [c for c in column_order if c in master_audit_df.columns]
+            master_audit_df = master_audit_df[column_order]
+
+            # Sort by Portfolio, Grid, Year
+            master_audit_df = master_audit_df.sort_values(['Portfolio', 'Grid', 'Year'])
+
+            # Count portfolios present
+            portfolios_present = master_audit_df['Portfolio'].nunique()
+            total_rows = len(master_audit_df)
+
+            with st.expander(f"📊 Aggregate Portfolio Details ({portfolios_present} portfolios, {total_rows:,} records)", expanded=False):
+                st.caption("Year-by-year breakdown for all grids across all portfolios. Use this to verify calculations.")
+
+                # Filter options
+                filter_col1, filter_col2 = st.columns(2)
+                with filter_col1:
+                    portfolio_filter = st.multiselect(
+                        "Filter by Portfolio:",
+                        options=sorted(master_audit_df['Portfolio'].unique()),
+                        default=sorted(master_audit_df['Portfolio'].unique()),
+                        key="audit_portfolio_filter"
+                    )
+                with filter_col2:
+                    grid_filter = st.multiselect(
+                        "Filter by Grid:",
+                        options=sorted(master_audit_df['Grid'].unique()),
+                        default=sorted(master_audit_df['Grid'].unique()),
+                        key="audit_grid_filter"
+                    )
+
+                # Apply filters
+                filtered_df = master_audit_df[
+                    (master_audit_df['Portfolio'].isin(portfolio_filter)) &
+                    (master_audit_df['Grid'].isin(grid_filter))
+                ]
+
+                # Display
+                st.dataframe(
+                    filtered_df.style.format({
+                        'Year': '{:.0f}',
+                        'Acres': '{:,.0f}',
+                        'Total Indemnity': '${:,.0f}',
+                        'Producer Premium': '${:,.0f}',
+                        'Net Return': '${:,.0f}',
+                        'Total ROI': '{:.2%}'
+                    }),
+                    use_container_width=True,
+                    height=400,
+                    hide_index=True
+                )
+
+                # Download button
+                csv_data = filtered_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Aggregate Audit CSV",
+                    data=csv_data,
+                    file_name="champion_vs_challenger_audit_details.csv",
+                    mime="text/csv",
+                    key="download_aggregate_audit"
+                )
+
+                # Summary stats per portfolio
+                st.markdown("**Portfolio Summary:**")
+                summary_data = []
+                for portfolio in sorted(filtered_df['Portfolio'].unique()):
+                    port_df = filtered_df[filtered_df['Portfolio'] == portfolio]
+                    total_indem = port_df['Total Indemnity'].sum()
+                    total_prem = port_df['Producer Premium'].sum()
+                    total_net = port_df['Net Return'].sum()
+                    cum_roi = total_net / total_prem if total_prem > 0 else 0
+                    num_grids = port_df['Grid'].nunique()
+                    num_years = port_df['Year'].nunique()
+
+                    summary_data.append({
+                        'Portfolio': portfolio,
+                        'Grids': num_grids,
+                        'Years': num_years,
+                        'Total Indemnity': total_indem,
+                        'Total Premium': total_prem,
+                        'Net Return': total_net,
+                        'Cumulative ROI': cum_roi
+                    })
+
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(
+                    summary_df.style.format({
+                        'Total Indemnity': '${:,.0f}',
+                        'Total Premium': '${:,.0f}',
+                        'Net Return': '${:,.0f}',
+                        'Cumulative ROI': '{:.2%}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+        else:
+            st.info("Run Champion and/or Challenger strategies to see aggregate details here.")
+
 
 # =============================================================================
 # === 5. TAB 3: BACKTESTING ENGINE (S3) ===
