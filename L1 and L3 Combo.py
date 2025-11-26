@@ -4003,7 +4003,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 'year': 'Year',
                                 'dominant_phase': 'ENSO Phase',
                                 'portfolio_avg_z': 'Portfolio Avg Z',
-                                'portfolio_trajectory': 'Trajectory',
+                                'portfolio_trajectory': 'Avg Trajectory',
                                 'grids_with_data': 'Grids w/ Data'
                             })
 
@@ -4011,7 +4011,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 analog_df.style.format({
                                     'Year': '{:.0f}',
                                     'Portfolio Avg Z': '{:.3f}',
-                                    'Trajectory': '{:.3f}',
+                                    'Avg Trajectory': '{:.3f}',
                                     'Grids w/ Data': '{:.0f}'
                                 }),
                                 use_container_width=True,
@@ -4751,7 +4751,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             stress_scenario = st.radio(
                                 "Select scenario to test:",
                                 options=[
-                                    "All Years (Current Results)",
+                                    "All Years (except Current Year)",
                                     "La Niña Years Only",
                                     "El Niño Years Only",
                                     "Neutral Years Only",
@@ -4773,7 +4773,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             if st.button("🔬 Run Stress Test", key="ps_run_stress_test", type="secondary"):
                                 # Map radio selection to scenario filter
                                 scenario_map = {
-                                    "All Years (Current Results)": "All Years (except Current Year)",
+                                    "All Years (except Current Year)": "All Years (except Current Year)",
                                     "La Niña Years Only": "ENSO Phase: La Nina",
                                     "El Niño Years Only": "ENSO Phase: El Nino",
                                     "Neutral Years Only": "ENSO Phase: Neutral",
@@ -4942,8 +4942,20 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 # Determine which weather challenger is better
                                 better_weather = "Challenger 3 (MVO)" if chall3_roi > chall2_roi else "Challenger 2 (Naive)"
 
-                                # Build insight message
-                                scenario_display = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "").replace("Years", "years")
+                                # Build insight message with full criteria for analog years
+                                if "Analog" in stress['scenario']:
+                                    # Use the full criteria label from weather config
+                                    config_insight = st.session_state.get('ps_weather_config', {})
+                                    criteria_insight = []
+                                    if config_insight.get('enso_regime', 'Any') != 'Any':
+                                        criteria_insight.append(config_insight.get('enso_regime'))
+                                    if config_insight.get('historical_context', 'Any') != 'Any':
+                                        criteria_insight.append(config_insight.get('historical_context'))
+                                    if config_insight.get('trajectory', 'Any') != 'Any':
+                                        criteria_insight.append(config_insight.get('trajectory'))
+                                    scenario_display = " + ".join(criteria_insight) if criteria_insight else "selected analog"
+                                else:
+                                    scenario_display = stress['scenario'].replace(" Only", "").replace(" (except Current Year)", "").replace("Years", "years")
 
                                 if weather_advantage_stress > weather_advantage_baseline + 0.02:  # Weather strategy shines
                                     insight_msg = f"""
@@ -6985,28 +6997,18 @@ def main():
     with st.sidebar.expander("📊 Z-Score Translation Key"):
         st.markdown("""
         **Historical Context (Current State):**
-        - **Dry**: Z < -0.25 (~40th percentile or below)
-        - **Normal**: -0.25 ≤ Z ≤ 0.25 (~40th-60th percentile)
-        - **Wet**: Z > 0.25 (~60th percentile or above)
+        - **Dry**: Z < -0.25
+        - **Normal**: -0.25 ≤ Z ≤ 0.25
+        - **Wet**: Z > 0.25
 
         **Trajectory (Expected Change):**
         - **Get Drier**: Δ < -0.05
         - **Stay Stable**: -0.05 ≤ Δ ≤ 0.05
         - **Get Wetter**: Δ > 0.05
 
-        **Percentile Reference:**
-        | Z-Score | Percentile |
-        |---------|------------|
-        | -1.0 | ~16th |
-        | -0.5 | ~31st |
-        | -0.25 | ~40th |
-        | 0.0 | 50th |
-        | +0.25 | ~60th |
-        | +0.5 | ~69th |
-        | +1.0 | ~84th |
-
         *Z-scores compare rainfall to historical average.*
-        *Trajectory = End-of-year minus Start-of-year Z-score.*
+
+        *Trajectory = Avg(Sep-Nov Z-scores) minus Avg(Jan-Mar Z-scores), then averaged across all grids in portfolio.*
         """)
 
     with st.sidebar.expander("🏆 Strategy Key"):
