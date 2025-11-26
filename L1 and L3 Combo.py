@@ -333,7 +333,7 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
 
         # Apply filters
         # ENSO regime filter
-        if not regime.startswith('Any'):
+        if regime != 'Any':
             if regime == 'La Niña' and dominant_phase != 'La Nina':
                 continue
             elif regime == 'El Niño' and dominant_phase != 'El Nino':
@@ -342,14 +342,14 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
                 continue
 
         # Historical context filter (based on portfolio average Z)
-        if not hist_context.startswith('Any'):
+        if hist_context != 'Any':
             context_bounds = HISTORICAL_CONTEXT_MAP.get(hist_context, None)
             if context_bounds:
                 if not (context_bounds['min'] <= portfolio_avg_z < context_bounds['max']):
                     continue
 
         # Trajectory filter
-        if not trend.startswith('Any'):
+        if trend != 'Any':
             trend_bounds = TREND_MAP.get(trend, None)
             if trend_bounds:
                 if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
@@ -3653,7 +3653,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col1:
                     enso_regime = st.selectbox(
                         "ENSO Regime",
-                        options=["La Niña", "El Niño", "Neutral", "Any (I am not sure)"],
+                        options=["La Niña", "El Niño", "Neutral", "Any"],
                         index=0,
                         key="ps_weather_enso"
                     )
@@ -3661,7 +3661,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col2:
                     historical_context = st.selectbox(
                         "Historical Context",
-                        options=["Dry", "Normal", "Wet", "Any (I am not sure)"],
+                        options=["Dry", "Normal", "Wet", "Any"],
                         index=0,
                         key="ps_weather_hist_context"
                     )
@@ -3669,7 +3669,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col3:
                     trajectory = st.selectbox(
                         "Expected Trajectory",
-                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any (I am not sure)"],
+                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any"],
                         index=0,
                         key="ps_weather_trajectory"
                     )
@@ -4377,7 +4377,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         corr_df,
                                         annot=True,
                                         cmap='RdYlGn_r',
-                                        fmt=".2f",
+                                        fmt=".3f",
                                         vmin=-1,
                                         vmax=1,
                                         center=0,
