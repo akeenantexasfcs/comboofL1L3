@@ -5034,9 +5034,10 @@ def main():
     st.sidebar.caption("*2025 Rates are used for this application")
     st.sidebar.caption("*Common Parameters are secondary to parameters on each tab")
     
-    tab1, tab2 = st.tabs([
-        "Decision Support",
-        "Portfolio Backtest"
+    tab1, tab2, tab3 = st.tabs([
+        "Decision Support (Audit)",
+        "Portfolio Backtest (Audit)",
+        "Champion vs Challenger(s)"
     ])
 
     with tab1:
@@ -5044,6 +5045,9 @@ def main():
 
     with tab2:
         render_tab5(session, grid_id, intended_use, productivity_factor, total_insured_acres, plan_code)
+
+    with tab3:
+        render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_factor, total_insured_acres, plan_code)
 
 if __name__ == "__main__":
     main()
