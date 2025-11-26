@@ -3458,6 +3458,31 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     else:
         st.caption(f"Challenger inherits Champion acres: {total_challenger_acres:,.0f} total")
 
+    # --------------------------------------------------------------------------
+    # Manual Incremental Allocations (Optional)
+    # --------------------------------------------------------------------------
+    use_manual_incremental_allocations = False
+    incremental_allocations = {}
+    incremental_all_valid = True
+
+    if incremental_grids:
+        use_manual_incremental_allocations = st.checkbox(
+            "Manually set interval allocations for incremental grids",
+            value=False,
+            help="If unchecked, the optimizer will find the best allocations. If checked, you can specify allocations like Champion.",
+            key="ps_manual_incremental_alloc"
+        )
+
+        if use_manual_incremental_allocations:
+            with st.expander("Incremental Grid Interval Allocations", expanded=True):
+                st.caption("Set allocations for each incremental grid. Base grids will inherit Champion's allocations.")
+                for gid in incremental_grids:
+                    st.markdown(f"**{gid}**")
+                    alloc_dict, is_valid = render_allocation_inputs(f"ps_incr_alloc_{gid}")
+                    incremental_allocations[gid] = alloc_dict
+                    if not is_valid:
+                        incremental_all_valid = False
+
     st.markdown("---")
 
     # === PREMIUM BUDGET (First - Optional) ===
@@ -3602,7 +3627,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     # ==========================================================================
     # TRAIN CHALLENGER BUTTON
     # ==========================================================================
-    if st.button("Train Challenger", key="ps_train_challenger", type="primary"):
+    # Disable button if manual incremental allocations are enabled but invalid
+    train_button_disabled = use_manual_incremental_allocations and not incremental_all_valid
+
+    if train_button_disabled:
+        st.warning("Please fix the incremental grid allocation errors before training.")
+
+    if st.button("Train Challenger", key="ps_train_challenger", type="primary", disabled=train_button_disabled):
 
         if 'champion_results' not in st.session_state or not st.session_state.champion_results:
             st.warning("Please run the Champion backtest first!")
@@ -3610,43 +3641,78 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             try:
                 # ===== STEP 1: Optimize Intervals =====
                 st.write("**Step 1: Optimizing Interval Allocations...**")
-                progress_bar = st.progress(0, text="Starting interval optimization...")
 
                 challenger_allocations = {}
                 challenger_interval_stats = {}
 
-                # Use challenger_grids (may differ from Champion's selected_grids)
-                for idx, gid in enumerate(challenger_grids):
-                    progress_bar.progress(
-                        (idx + 1) / len(challenger_grids),
-                        text=f"Optimizing intervals for {gid}..."
-                    )
-
-                    best_alloc, best_roi, tested = run_fast_optimization_core(
-                        session, gid, start_year, end_year, plan_code,
-                        productivity_factor, challenger_acres[gid], intended_use,
-                        coverage_level, search_iterations, search_mode,
-                        require_full_coverage=require_full_coverage,
-                        interval_range_opt=interval_range_opt,
-                        grid_index=idx
-                    )
-
-                    if best_alloc:
-                        challenger_allocations[gid] = best_alloc
+                # Determine which grids need optimization vs manual allocation
+                grids_to_optimize = []
+                for gid in challenger_grids:
+                    if use_manual_incremental_allocations and gid in incremental_allocations:
+                        # Use manual allocation for this incremental grid
+                        challenger_allocations[gid] = incremental_allocations[gid]
                         challenger_interval_stats[gid] = {
-                            'roi': best_roi,
-                            'tested': tested,
-                            'allocation': best_alloc
+                            'roi': None,  # Not optimized
+                            'tested': 0,
+                            'allocation': incremental_allocations[gid],
+                            'manual': True
                         }
                     else:
-                        # Fallback to naive allocation (no champion reference for different grids)
-                        naive_alloc = {interval: 0.0 for interval in INTERVAL_ORDER_11}
-                        for i, interval in enumerate([0, 2, 4, 6, 8]):
-                            naive_alloc[INTERVAL_ORDER_11[interval]] = 0.20
-                        challenger_allocations[gid] = naive_alloc
+                        grids_to_optimize.append(gid)
 
-                progress_bar.empty()
-                st.success(f"Interval optimization complete! Tested {sum(s['tested'] for s in challenger_interval_stats.values()):,} strategies.")
+                # Show info about manual vs optimized grids
+                if use_manual_incremental_allocations and incremental_allocations:
+                    st.info(f"Using manual allocations for {len(incremental_allocations)} incremental grid(s). "
+                           f"Optimizing {len(grids_to_optimize)} base grid(s).")
+
+                # Optimize remaining grids
+                if grids_to_optimize:
+                    progress_bar = st.progress(0, text="Starting interval optimization...")
+
+                    for idx, gid in enumerate(grids_to_optimize):
+                        progress_bar.progress(
+                            (idx + 1) / len(grids_to_optimize),
+                            text=f"Optimizing intervals for {gid}..."
+                        )
+
+                        # Find the original index for full coverage pattern assignment
+                        original_idx = challenger_grids.index(gid)
+
+                        best_alloc, best_roi, tested = run_fast_optimization_core(
+                            session, gid, start_year, end_year, plan_code,
+                            productivity_factor, challenger_acres[gid], intended_use,
+                            coverage_level, search_iterations, search_mode,
+                            require_full_coverage=require_full_coverage,
+                            interval_range_opt=interval_range_opt,
+                            grid_index=original_idx
+                        )
+
+                        if best_alloc:
+                            challenger_allocations[gid] = best_alloc
+                            challenger_interval_stats[gid] = {
+                                'roi': best_roi,
+                                'tested': tested,
+                                'allocation': best_alloc
+                            }
+                        else:
+                            # Fallback to naive allocation (no champion reference for different grids)
+                            naive_alloc = {interval: 0.0 for interval in INTERVAL_ORDER_11}
+                            for i, interval in enumerate([0, 2, 4, 6, 8]):
+                                naive_alloc[INTERVAL_ORDER_11[interval]] = 0.20
+                            challenger_allocations[gid] = naive_alloc
+
+                    progress_bar.empty()
+
+                # Report results
+                optimized_count = sum(1 for s in challenger_interval_stats.values() if not s.get('manual', False))
+                manual_count = sum(1 for s in challenger_interval_stats.values() if s.get('manual', False))
+                total_tested = sum(s['tested'] for s in challenger_interval_stats.values())
+
+                if manual_count > 0:
+                    st.success(f"Interval allocation complete! {optimized_count} grid(s) optimized ({total_tested:,} strategies tested), "
+                              f"{manual_count} grid(s) using manual allocations.")
+                else:
+                    st.success(f"Interval optimization complete! Tested {total_tested:,} strategies.")
 
                 # ===== STEP 2: Acreage Optimization =====
                 # challenger_acres already defined from UI (default or manual override)
