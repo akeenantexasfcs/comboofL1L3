@@ -3298,11 +3298,11 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         with mvo_col2:
             max_turnover = st.slider(
                 "Max Turnover",
-                min_value=0.05,
+                min_value=0.00,
                 max_value=1.00,
                 value=0.20,
                 step=0.05,
-                help="How much each grid's allocation can change. 1.00 = full reallocation allowed.",
+                help="How much each grid's allocation can change. 0.00 = no changes allowed, 1.00 = full reallocation allowed.",
                 key="ps_challenger_turnover"
             )
         st.info("MVO will redistribute acres across grids based on historical correlations and returns.")
@@ -3902,99 +3902,390 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                         # === WEATHER CHALLENGER 3: Correlated Weather Portfolio ===
                         st.markdown("---")
-                        st.markdown("#### 🌪️ Weather Challenger 3: Correlation-Aware")
-                        st.caption("Uses MVO to optimize acre distribution based on how grids performed together during analog years.")
+                        st.markdown("#### 🌪️ Challenger 3: Correlation-Aware (MVO)")
+                        st.caption("Two-stage optimization: (1) Optimize intervals per grid on analog years, (2) MVO redistributes acres based on cross-grid correlations.")
 
-                        # Risk profile for MVO
-                        weather_risk_profile = st.select_slider(
-                            "Risk Profile for MVO",
-                            options=["Aggressive", "Growth", "Balanced", "Conservative", "Defensive"],
-                            value="Balanced",
-                            key="ps_weather_risk_profile"
+                        # --- Premium Budget ---
+                        st.markdown("**Premium Budget**")
+                        weather3_enable_budget = st.checkbox(
+                            "Set annual premium budget",
+                            value=False,
+                            help="Limit total annual premium spending for Challenger 3",
+                            key="ps_weather3_budget"
                         )
 
-                        weather_risk_map = {
-                            "Aggressive": 0.5,
-                            "Growth": 0.75,
-                            "Balanced": 1.0,
-                            "Conservative": 1.5,
-                            "Defensive": 2.0
-                        }
-                        weather_risk_aversion = weather_risk_map[weather_risk_profile]
+                        weather3_annual_budget = 50000
+                        weather3_allow_scale_up = False
+                        if weather3_enable_budget:
+                            budget_col1, budget_col2 = st.columns(2)
+                            with budget_col1:
+                                weather3_annual_budget = st.number_input(
+                                    "Maximum Annual Premium ($)",
+                                    min_value=1000,
+                                    value=50000,
+                                    step=1000,
+                                    help="Maximum producer premium (after subsidy) per year",
+                                    key="ps_weather3_budget_amt"
+                                )
+                            with budget_col2:
+                                weather3_allow_scale_up = st.checkbox(
+                                    "Auto-fill budget (scale up if under)",
+                                    value=False,
+                                    help="If the optimized strategy comes in under budget, automatically scale up acres to utilize the full budget.",
+                                    key="ps_weather3_autofill"
+                                )
 
-                        if st.button("🌪️ Generate Weather Challenger 3", key="ps_generate_weather_3", type="primary"):
+                        st.markdown("---")
+
+                        # --- Interval Strategy ---
+                        st.markdown("**Interval Strategy**")
+
+                        weather3_iteration_map = {'Fast': 500, 'Standard': 2000, 'Thorough': 5000, 'Maximum': 10000}
+                        weather3_search_depth_key = st.select_slider(
+                            "Search Depth",
+                            options=list(weather3_iteration_map.keys()),
+                            value='Standard',
+                            key="ps_weather3_depth"
+                        )
+                        weather3_search_iterations = weather3_iteration_map[weather3_search_depth_key]
+
+                        # --- Diversification Constraints ---
+                        st.markdown("**Diversification Constraints**")
+                        div_col1, div_col2 = st.columns(2)
+
+                        with div_col1:
+                            weather3_require_full_coverage = st.checkbox(
+                                "Ensure Full Calendar Coverage",
+                                value=False,
+                                help="Creates staggered portfolio with Pattern A (6 intervals) and Pattern B (5 intervals) to cover all 11 intervals while maintaining non-adjacency. Requires at least 2 grids.",
+                                key="ps_weather3_full_coverage"
+                            )
+
+                        with div_col2:
+                            if not weather3_require_full_coverage:
+                                weather3_interval_range = st.slider(
+                                    "Number of Active Intervals Range",
+                                    min_value=2,
+                                    max_value=6,
+                                    value=(2, 6),
+                                    help="Optimizer can choose ANY number of intervals within this range. Each interval must have 10%-50%.",
+                                    key="ps_weather3_interval_range"
+                                )
+                            else:
+                                weather3_interval_range = (5, 6)  # Full coverage uses Pattern A/B
+                                st.info("Full coverage mode: Pattern A (6) + Pattern B (5)")
+
+                        st.markdown("---")
+
+                        # --- Acreage Strategy ---
+                        st.markdown("**Acreage Strategy**")
+
+                        weather3_optimize_acreage = st.checkbox(
+                            "Optimize acreage distribution (Mean-Variance Optimization)",
+                            value=True,  # Default ON for Challenger 3 since that's its purpose
+                            help="Use Markowitz portfolio theory to redistribute acres based on risk-adjusted returns during analog years",
+                            key="ps_weather3_mvo"
+                        )
+
+                        weather3_risk_aversion = 1.0
+                        weather3_max_turnover = 0.20
+                        if weather3_optimize_acreage:
+                            mvo_col1, mvo_col2 = st.columns(2)
+                            with mvo_col1:
+                                weather3_risk_profile = st.select_slider(
+                                    "Risk Profile",
+                                    options=["Aggressive", "Growth", "Balanced", "Conservative", "Defensive"],
+                                    value="Balanced",
+                                    help="Aggressive = chase highest returns, accept volatility. Defensive = prioritize stability and diversification.",
+                                    key="ps_weather3_risk_profile"
+                                )
+
+                                weather3_risk_map = {
+                                    "Aggressive": 0.5,
+                                    "Growth": 0.75,
+                                    "Balanced": 1.0,
+                                    "Conservative": 1.5,
+                                    "Defensive": 2.0
+                                }
+                                weather3_risk_aversion = weather3_risk_map[weather3_risk_profile]
+
+                            with mvo_col2:
+                                weather3_max_turnover = st.slider(
+                                    "Max Turnover",
+                                    min_value=0.00,
+                                    max_value=1.00,
+                                    value=0.20,
+                                    step=0.05,
+                                    help="How much each grid's acre allocation can change. 0.00 = no changes, 1.00 = full reallocation allowed.",
+                                    key="ps_weather3_turnover"
+                                )
+
+                        st.markdown("---")
+
+                        # --- Generate Button ---
+                        if st.button("🌪️ Generate Challenger 3 (MVO)", key="ps_generate_weather_3", type="primary"):
                             weather_config = st.session_state.get('ps_weather_config', {})
                             weather_grids_gen = weather_config.get('grids', [])
                             weather_acres_gen = weather_config.get('acres', {})
-                            interval_range_gen = weather_config.get('interval_range', (2, 6))
 
                             analog_year_list = [y['year'] for y in st.session_state.get('ps_analog_years', [])]
 
                             if len(weather_grids_gen) < 2:
-                                st.error("Weather Challenger 3 requires at least 2 grids for correlation analysis.")
+                                st.error("Challenger 3 requires at least 2 grids for correlation analysis.")
                             elif len(analog_year_list) == 0:
                                 st.error("No analog years found. Please run 'Find Analog Years' first.")
                             else:
                                 with st.spinner(f"Running 2-stage optimization for {len(weather_grids_gen)} grids..."):
-                                    mvo_result = run_weather_mvo_optimization(
+
+                                    # === STAGE 1: Interval Optimization ===
+                                    st.write("**Stage 1: Optimizing Interval Allocations...**")
+                                    progress_bar = st.progress(0, text="Starting interval optimization...")
+
+                                    weather3_allocations = {}
+                                    weather3_interval_stats = {}
+
+                                    for idx, gid in enumerate(weather_grids_gen):
+                                        progress_bar.progress(
+                                            (idx + 1) / len(weather_grids_gen),
+                                            text=f"Optimizing intervals for {gid}..."
+                                        )
+
+                                        grid_acres = weather_acres_gen.get(gid, 1000)
+
+                                        # Use run_analog_year_optimization with full coverage support
+                                        if weather3_require_full_coverage:
+                                            # For full coverage, we need to use the pattern-based approach
+                                            best_alloc, best_roi, tested = run_fast_optimization_core(
+                                                session, gid, min(analog_year_list), max(analog_year_list), plan_code,
+                                                productivity_factor, grid_acres, intended_use,
+                                                coverage_level, weather3_search_iterations, 'global',
+                                                require_full_coverage=True,
+                                                interval_range_opt=weather3_interval_range,
+                                                grid_index=idx
+                                            )
+                                        else:
+                                            best_alloc, best_roi, tested = run_analog_year_optimization(
+                                                session=session,
+                                                grid_id=gid,
+                                                analog_years=analog_year_list,
+                                                plan_code=plan_code,
+                                                productivity_factor=productivity_factor,
+                                                acres=grid_acres,
+                                                intended_use=intended_use,
+                                                coverage_level=coverage_level,
+                                                iterations=weather3_search_iterations,
+                                                interval_range_opt=weather3_interval_range
+                                            )
+
+                                        weather3_allocations[gid] = best_alloc
+                                        weather3_interval_stats[gid] = {'roi': best_roi, 'tested': tested}
+
+                                    progress_bar.empty()
+                                    st.success(f"Stage 1 complete! Tested {sum(s['tested'] for s in weather3_interval_stats.values()):,} strategies.")
+
+                                    # === STAGE 2: Acre Optimization ===
+                                    weather3_acres = weather_acres_gen.copy()
+                                    analog_roi_correlation = pd.DataFrame()
+
+                                    if weather3_optimize_acreage:
+                                        st.write("**Stage 2: Optimizing Acreage Distribution (MVO)...**")
+
+                                        # Build ROI series for each grid during ANALOG YEARS ONLY
+                                        analog_roi_data = []
+
+                                        for gid in weather_grids_gen:
+                                            allocation = weather3_allocations.get(gid, {})
+                                            if not allocation:
+                                                continue
+
+                                            try:
+                                                subsidy = load_subsidies(session, plan_code, [coverage_level])[coverage_level]
+                                                county_base_value = load_county_base_value(session, gid)
+                                                current_rate_year = get_current_rate_year(session)
+                                                premium_rates = load_premium_rates(session, gid, intended_use, [coverage_level], current_rate_year)[coverage_level]
+
+                                                dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
+
+                                                all_indices_df = load_all_indices(session, gid)
+                                                all_indices_df = all_indices_df[all_indices_df['YEAR'].isin(analog_year_list)]
+
+                                                for year in analog_year_list:
+                                                    year_data = all_indices_df[all_indices_df['YEAR'] == year]
+                                                    if year_data.empty:
+                                                        continue
+
+                                                    year_indemnity = 0
+                                                    year_premium = 0
+
+                                                    for interval, pct in allocation.items():
+                                                        if pct == 0:
+                                                            continue
+
+                                                        index_row = year_data[year_data['INTERVAL_NAME'] == interval]
+                                                        index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
+
+                                                        premium_rate = premium_rates.get(interval, 0)
+                                                        interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
+                                                        total_prem = round_half_up(interval_protection * premium_rate, 0)
+                                                        prem_subsidy = round_half_up(total_prem * subsidy, 0)
+                                                        producer_premium = total_prem - prem_subsidy
+
+                                                        trigger = coverage_level * 100
+                                                        shortfall = max(0, (trigger - index_value) / trigger)
+                                                        indemnity = round_half_up(shortfall * interval_protection, 0) if shortfall > 0 else 0
+
+                                                        year_indemnity += indemnity
+                                                        year_premium += producer_premium
+
+                                                    roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
+                                                    analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
+
+                                            except Exception as e:
+                                                continue
+
+                                        if len(analog_roi_data) > 0:
+                                            analog_roi_df = pd.DataFrame(analog_roi_data)
+
+                                            pivot_df = analog_roi_df.pivot_table(
+                                                values='roi',
+                                                index='year',
+                                                columns='grid'
+                                            )
+
+                                            mean_rois = pivot_df.mean()
+                                            cov_matrix = pivot_df.cov()
+                                            analog_roi_correlation = pivot_df.corr()
+
+                                            grid_list = [gid for gid in weather_grids_gen if gid in mean_rois.index]
+
+                                            if len(grid_list) >= 2:
+                                                n = len(grid_list)
+                                                means = np.array([mean_rois.get(gid, 0) for gid in grid_list])
+
+                                                cov = np.zeros((n, n))
+                                                for i, gi in enumerate(grid_list):
+                                                    for j, gj in enumerate(grid_list):
+                                                        if gi in cov_matrix.index and gj in cov_matrix.columns:
+                                                            cov[i, j] = cov_matrix.loc[gi, gj]
+
+                                                total_acres = sum(weather_acres_gen.get(gid, 0) for gid in grid_list)
+                                                if total_acres == 0:
+                                                    total_acres = len(grid_list) * 1000
+                                                initial_weights = np.array([weather_acres_gen.get(gid, 0) / total_acres for gid in grid_list])
+
+                                                def neg_utility(weights):
+                                                    portfolio_return = np.dot(weights, means)
+                                                    portfolio_variance = np.dot(weights, np.dot(cov, weights))
+                                                    utility = portfolio_return - weather3_risk_aversion * portfolio_variance
+                                                    return -utility
+
+                                                constraints = [
+                                                    {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}
+                                                ]
+
+                                                # Bounds based on max_turnover
+                                                bounds = []
+                                                for i in range(n):
+                                                    w_init = initial_weights[i]
+                                                    if weather3_max_turnover >= 1.0:
+                                                        lower, upper = 0.0, 1.0
+                                                    else:
+                                                        lower = max(0.0, w_init - weather3_max_turnover)
+                                                        upper = min(1.0, w_init + weather3_max_turnover)
+                                                    bounds.append((lower, upper))
+
+                                                result = minimize(
+                                                    neg_utility,
+                                                    initial_weights,
+                                                    method='SLSQP',
+                                                    bounds=bounds,
+                                                    constraints=constraints,
+                                                    options={'maxiter': 1000, 'ftol': 1e-9}
+                                                )
+
+                                                if result.success:
+                                                    optimal_weights = result.x
+                                                else:
+                                                    optimal_weights = initial_weights
+
+                                                for i, gid in enumerate(grid_list):
+                                                    weather3_acres[gid] = optimal_weights[i] * total_acres
+
+                                                for gid in weather_grids_gen:
+                                                    if gid not in weather3_acres:
+                                                        weather3_acres[gid] = weather_acres_gen.get(gid, 0)
+
+                                    # === Apply Budget Constraint ===
+                                    if weather3_enable_budget:
+                                        st.write("**Applying Budget Constraint...**")
+
+                                        grid_results_for_cost = {
+                                            gid: {'best_strategy': {'allocation': weather3_allocations[gid], 'coverage_level': coverage_level}}
+                                            for gid in weather_grids_gen
+                                        }
+
+                                        total_cost, _ = calculate_annual_premium_cost(
+                                            session, weather_grids_gen, weather3_acres, grid_results_for_cost,
+                                            productivity_factor, intended_use, plan_code
+                                        )
+
+                                        weather3_acres, scale_factor = apply_budget_constraint(
+                                            weather3_acres, total_cost, weather3_annual_budget, allow_scale_up=weather3_allow_scale_up
+                                        )
+
+                                        if scale_factor < 1.0:
+                                            st.info(f"Acres scaled DOWN by {scale_factor:.1%} to fit budget")
+                                        elif scale_factor > 1.0:
+                                            st.success(f"Acres scaled UP by {scale_factor:.1%} to fill budget")
+
+                                    # === STAGE 3: Final Backtest ===
+                                    st.write("**Stage 3: Running Final Backtest...**")
+
+                                    weather3_df, weather3_grid_results, weather3_metrics = run_portfolio_backtest(
                                         session=session,
-                                        weather_grids=weather_grids_gen,
-                                        weather_acres=weather_acres_gen,
-                                        analog_years=analog_year_list,
+                                        selected_grids=weather_grids_gen,
+                                        grid_allocations=weather3_allocations,
+                                        grid_acres=weather3_acres,
+                                        start_year=start_year,
+                                        end_year=end_year,
                                         coverage_level=coverage_level,
                                         productivity_factor=productivity_factor,
                                         intended_use=intended_use,
                                         plan_code=plan_code,
-                                        interval_range_opt=interval_range_gen,
-                                        optimization_iterations=2000,
-                                        risk_aversion=weather_risk_aversion
+                                        scenario='All Years (except Current Year)'
                                     )
 
-                                if mvo_result is None:
-                                    st.error("MVO optimization failed.")
-                                else:
-                                    # Backtest on ALL years for fair comparison
-                                    with st.spinner("Backtesting Weather Challenger 3 on all years..."):
-                                        weather3_df, weather3_grid_results, weather3_metrics = run_portfolio_backtest(
-                                            session=session,
-                                            selected_grids=weather_grids_gen,
-                                            grid_allocations=mvo_result['allocations'],
-                                            grid_acres=mvo_result['optimized_acres'],
-                                            start_year=start_year,
-                                            end_year=end_year,
-                                            coverage_level=coverage_level,
-                                            productivity_factor=productivity_factor,
-                                            intended_use=intended_use,
-                                            plan_code=plan_code,
-                                            scenario='All Years (except Current Year)'
-                                        )
-
                                     st.session_state.weather_challenger_3_results = {
-                                        'allocations': mvo_result['allocations'],
-                                        'acres': mvo_result['optimized_acres'],
-                                        'initial_acres': mvo_result['initial_acres'],
+                                        'allocations': weather3_allocations,
+                                        'acres': weather3_acres,
+                                        'initial_acres': weather_acres_gen.copy(),
                                         'grids': weather_grids_gen,
                                         'metrics': weather3_metrics,
                                         'df': weather3_df,
                                         'analog_years_used': analog_year_list,
-                                        'analog_roi_correlation': mvo_result['analog_roi_correlation'],
-                                        'stage1_stats': mvo_result['stage1_stats'],
-                                        'methodology': 'mvo',
-                                        'risk_aversion': weather_risk_aversion
+                                        'analog_roi_correlation': analog_roi_correlation if weather3_optimize_acreage else pd.DataFrame(),
+                                        'interval_stats': weather3_interval_stats,
+                                        'methodology': 'mvo' if weather3_optimize_acreage else 'naive',
+                                        'risk_aversion': weather3_risk_aversion,
+                                        'budget_enabled': weather3_enable_budget,
+                                        'budget_amount': weather3_annual_budget if weather3_enable_budget else None
                                     }
 
-                                    st.success(f"Weather Challenger 3 generated! MVO optimized acres based on {len(analog_year_list)} analog years.")
+                                    st.success(f"Challenger 3 (MVO) generated! Optimized on {len(analog_year_list)} analog years.")
 
                         # Display Weather Challenger 3 Results
                         if 'weather_challenger_3_results' in st.session_state and st.session_state.weather_challenger_3_results:
                             weather3 = st.session_state.weather_challenger_3_results
 
                             st.markdown("---")
-                            st.markdown("### 🌪️ Weather Challenger 3 Results")
+                            st.markdown("### 🌪️ Challenger 3 (MVO) Results")
 
                             # Methodology note
                             analog_count_3 = len(weather3.get('analog_years_used', []))
-                            st.info(f"**Methodology:** Weather Challenger 3 uses two-stage optimization: (1) Optimize intervals per grid on {analog_count_3} analog years, (2) MVO redistributes acres based on how grids correlate during those years. Risk aversion: {weather3.get('risk_aversion', 1.0)}")
+                            budget_text = ""
+                            if weather3.get('budget_enabled'):
+                                budget_text = f" | Budget: ${weather3.get('budget_amount', 0):,.0f}"
+                            st.info(f"**Methodology:** Challenger 3 uses two-stage optimization: (1) Optimize intervals per grid on {analog_count_3} analog years, (2) MVO redistributes acres based on cross-grid correlations. Risk aversion: {weather3.get('risk_aversion', 1.0)}{budget_text}")
 
                             # 4-Way Performance Comparison
                             if ('champion_results' in st.session_state and st.session_state.champion_results and
@@ -4022,13 +4313,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         f"${chall1_m.get('avg_annual_premium', 0):,.0f}",
                                         f"{chall1_m.get('profitable_pct', 0):.0%}"
                                     ],
-                                    'Weather 2 (Naive)': [
+                                    'Challenger 2 (Naive)': [
                                         f"{weather2_m.get('cumulative_roi', 0):.1%}",
                                         f"{weather2_m.get('risk_adj_return', 0):.2f}",
                                         f"${weather2_m.get('avg_annual_premium', 0):,.0f}",
                                         f"{weather2_m.get('profitable_pct', 0):.0%}"
                                     ],
-                                    'Weather 3 (MVO)': [
+                                    'Challenger 3 (MVO)': [
                                         f"{weather3_m.get('cumulative_roi', 0):.1%}",
                                         f"{weather3_m.get('risk_adj_return', 0):.2f}",
                                         f"${weather3_m.get('avg_annual_premium', 0):,.0f}",
@@ -4042,16 +4333,16 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 all_rois = {
                                     'Champion': champ_m.get('cumulative_roi', 0),
                                     'Challenger 1': chall1_m.get('cumulative_roi', 0),
-                                    'Weather 2': weather2_m.get('cumulative_roi', 0),
-                                    'Weather 3': weather3_m.get('cumulative_roi', 0)
+                                    'Challenger 2 (Naive)': weather2_m.get('cumulative_roi', 0),
+                                    'Challenger 3 (MVO)': weather3_m.get('cumulative_roi', 0)
                                 }
                                 winner = max(all_rois, key=all_rois.get)
                                 winner_roi = all_rois[winner]
 
-                                if winner == 'Weather 3':
-                                    st.success(f"**WEATHER CHALLENGER 3 WINS!** ROI: {winner_roi:.1%}")
-                                elif winner == 'Weather 2':
-                                    st.success(f"**WEATHER CHALLENGER 2 WINS!** ROI: {winner_roi:.1%}")
+                                if winner == 'Challenger 3 (MVO)':
+                                    st.success(f"**CHALLENGER 3 (MVO) WINS!** ROI: {winner_roi:.1%}")
+                                elif winner == 'Challenger 2 (Naive)':
+                                    st.success(f"**CHALLENGER 2 (NAIVE) WINS!** ROI: {winner_roi:.1%}")
                                 elif winner == 'Challenger 1':
                                     st.success(f"**CHALLENGER 1 WINS!** ROI: {winner_roi:.1%}")
                                 else:
@@ -5095,11 +5386,11 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
         with opt_col2:
             max_turnover = st.slider(
                 "Max Turnover",
-                min_value=0.05,
+                min_value=0.00,
                 max_value=1.00,
                 value=0.20,
                 step=0.05,
-                help="How much each grid's allocation can change. 1.00 = full reallocation allowed.",
+                help="How much each grid's allocation can change. 0.00 = no changes allowed, 1.00 = full reallocation allowed.",
                 key="s4_max_turnover"
             )
 
@@ -6114,11 +6405,11 @@ def main():
         **Challenger 1**
         Your portfolio with optimized interval timing
 
-        **Challenger 2** *(Naive Weather)*
+        **Challenger 2 (Naive)**
         Weather-focused portfolio - each grid optimized independently for analog years
 
-        **Challenger 3** *(MVO Weather)*
-        Weather-optimized portfolio - considers cross-grid correlations during analog years
+        **Challenger 3 (MVO)**
+        Weather-optimized portfolio - considers cross-grid correlations during analog years, redistributes acres via Mean-Variance Optimization
         """)
 
     st.sidebar.divider()
