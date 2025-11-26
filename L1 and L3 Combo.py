@@ -4793,15 +4793,51 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                 else:
                                                     initial_weights = np.ones(n) / n
 
+                                                # Calculate cost per acre for budget constraint
+                                                cost_per_acre_weather3 = {}
+                                                for gid in grid_list:
+                                                    try:
+                                                        grid_alloc = weather3_allocations.get(gid, {})
+                                                        grid_county_base = load_county_base_value(session, gid)
+                                                        grid_prem_rates = load_premium_rates(session, gid, intended_use, [coverage_level], current_rate_year)[coverage_level]
+                                                        grid_subsidy = load_subsidies(session, plan_code, [coverage_level])[coverage_level]
+                                                        grid_dollar_prot = calculate_protection(grid_county_base, coverage_level, productivity_factor)
+
+                                                        acre_premium = 0
+                                                        for interval, pct in grid_alloc.items():
+                                                            if pct == 0:
+                                                                continue
+                                                            interval_prot = grid_dollar_prot * pct
+                                                            total_prem = interval_prot * grid_prem_rates.get(interval, 0)
+                                                            producer_prem = total_prem * (1 - grid_subsidy)
+                                                            acre_premium += producer_prem
+                                                        cost_per_acre_weather3[gid] = acre_premium
+                                                    except:
+                                                        cost_per_acre_weather3[gid] = 1
+
+                                                costs_array = np.array([cost_per_acre_weather3.get(gid, 1) for gid in grid_list])
+
                                                 def neg_utility(weights):
                                                     portfolio_return = np.dot(weights, means)
                                                     portfolio_variance = np.dot(weights, np.dot(cov, weights))
                                                     utility = portfolio_return - weather3_risk_aversion * portfolio_variance
                                                     return -utility
 
-                                                constraints = [
-                                                    {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}
-                                                ]
+                                                # Build constraints - include budget constraint if enabled
+                                                if weather3_enable_budget:
+                                                    def budget_constraint_w3(weights):
+                                                        acres = weights * budget_adjusted_total
+                                                        total_cost = np.dot(acres, costs_array)
+                                                        return weather3_annual_budget - total_cost
+
+                                                    constraints = [
+                                                        {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0},
+                                                        {'type': 'ineq', 'fun': budget_constraint_w3}
+                                                    ]
+                                                else:
+                                                    constraints = [
+                                                        {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}
+                                                    ]
 
                                                 # Bounds: ±max_turnover RELATIVE to budget-scaled baseline weights
                                                 bounds = []
