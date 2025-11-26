@@ -197,6 +197,13 @@ def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_ye
         if 'OPTICAL_MAPPING_CPC' in all_indices_df.columns:
             return all_indices_df[(all_indices_df['OPTICAL_MAPPING_CPC'] == 'Neutral') & (all_indices_df['YEAR'] < 2025)]
         return all_indices_df[all_indices_df['YEAR'] < 2025]
+    elif scenario == 'Analog Years':
+        # Filter to only analog years from session state
+        analog_years = st.session_state.get('ps_analog_years', [])
+        analog_year_list = [y['year'] for y in analog_years]
+        if analog_year_list:
+            return all_indices_df[all_indices_df['YEAR'].isin(analog_year_list)]
+        return all_indices_df[all_indices_df['YEAR'] < 2025]
     else:  # Select my own interval
         return all_indices_df[(all_indices_df['YEAR'] >= start_year) & (all_indices_df['YEAR'] <= end_year)]
 
@@ -1100,8 +1107,9 @@ def run_analog_year_optimization(
     """
     Run optimization for a single grid using ONLY the specified analog years.
 
-    This is similar to run_fast_optimization_core but filters to specific years
-    rather than a year range. Used for weather-view optimization.
+    IMPROVED: Uses interval-weighted search instead of pure random.
+    Scores intervals by average shortfall during analog years, then focuses
+    the search on high-shortfall intervals (similar to Challenger 1 approach).
 
     Args:
         session: Snowflake session
@@ -1126,9 +1134,9 @@ def run_analog_year_optimization(
     all_indices_df = load_all_indices(session, grid_id)
 
     # Filter to ONLY analog years
-    all_indices_df = all_indices_df[all_indices_df['YEAR'].isin(analog_years)]
+    analog_indices_df = all_indices_df[all_indices_df['YEAR'].isin(analog_years)]
 
-    if all_indices_df.empty:
+    if analog_indices_df.empty:
         return {}, 0.0, 0
 
     current_rate_year = get_current_rate_year(session)
@@ -1138,8 +1146,134 @@ def run_analog_year_optimization(
     dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
     total_protection = dollar_protection * acres
 
-    # Build index matrix: (n_years, 11)
-    years = sorted(all_indices_df['YEAR'].unique())
+    # === KEY IMPROVEMENT: Score intervals by analog-year shortfall ===
+    trigger = coverage_level * 100
+    interval_scores = {}
+
+    for interval in INTERVAL_ORDER_11:
+        interval_data = analog_indices_df[analog_indices_df['INTERVAL_NAME'] == interval]['INDEX_VALUE']
+        if len(interval_data) > 0:
+            # Calculate average shortfall (how much below trigger)
+            # Higher shortfall = more indemnity potential = better interval to insure
+            avg_index = interval_data.mean()
+            avg_shortfall = max(0, trigger - avg_index)
+
+            # Also consider frequency of payouts
+            payout_frequency = (interval_data < trigger).sum() / len(interval_data)
+
+            # Combined score: shortfall magnitude * frequency
+            # This favors intervals that both pay out often AND pay out big
+            interval_scores[interval] = avg_shortfall * (0.5 + payout_frequency)
+        else:
+            interval_scores[interval] = 0
+
+    # Sort intervals by score (highest shortfall first)
+    sorted_intervals = sorted(interval_scores.items(), key=lambda x: x[1], reverse=True)
+
+    # Determine search depth based on iterations
+    # More iterations = explore more intervals
+    if iterations >= 7000:
+        search_depth = 9  # Near-exhaustive
+    elif iterations >= 3000:
+        search_depth = 7  # Thorough
+    elif iterations >= 1000:
+        search_depth = 6  # Standard
+    else:
+        search_depth = 5  # Fast
+
+    top_intervals = [x[0] for x in sorted_intervals[:search_depth]]
+
+    # === Generate candidates using INTELLIGENT combinatorial search ===
+    candidates = []
+    min_intervals, max_intervals = interval_range_opt
+
+    # Phase 1: Systematic combinations of top intervals (like Challenger 1)
+    for num_intervals in range(min_intervals, min(max_intervals + 1, len(top_intervals) + 1)):
+        for combo in combinations(top_intervals, num_intervals):
+            # Skip adjacent intervals (except Nov-Dec/Jan-Feb wrap)
+            if has_adjacent_intervals_in_list(list(combo)):
+                continue
+
+            # Generate multiple allocation patterns for this combination
+            combo_allocations = generate_allocations(list(combo), num_intervals)
+            candidates.extend(combo_allocations)
+
+    # Phase 2: Add weighted random candidates that favor high-score intervals
+    # This explores beyond the strict top-N but still biased toward good intervals
+    total_score = sum(max(0.1, score) for score in interval_scores.values())
+    interval_weights = {k: max(0.1, v) / total_score for k, v in interval_scores.items()}
+
+    remaining_iterations = max(0, iterations - len(candidates))
+
+    for _ in range(remaining_iterations):
+        # Weighted random selection of intervals
+        num_intervals = random.randint(min_intervals, max_intervals)
+
+        # Select intervals with probability proportional to their score
+        available = list(INTERVAL_ORDER_11)
+        selected = []
+
+        for _ in range(num_intervals):
+            if not available:
+                break
+
+            # Calculate weights for available intervals
+            weights = [interval_weights.get(i, 0.1) for i in available]
+            total_w = sum(weights)
+            if total_w == 0:
+                break
+
+            probs = [w / total_w for w in weights]
+
+            # Weighted random choice
+            r = random.random()
+            cumsum = 0
+            chosen_idx = 0
+            for i, p in enumerate(probs):
+                cumsum += p
+                if r <= cumsum:
+                    chosen_idx = i
+                    break
+
+            chosen = available[chosen_idx]
+            selected.append(chosen)
+
+            # Remove chosen and adjacent intervals from available
+            to_remove = [chosen]
+            chosen_global_idx = INTERVAL_ORDER_11.index(chosen)
+            if chosen_global_idx > 0:
+                to_remove.append(INTERVAL_ORDER_11[chosen_global_idx - 1])
+            if chosen_global_idx < len(INTERVAL_ORDER_11) - 1:
+                to_remove.append(INTERVAL_ORDER_11[chosen_global_idx + 1])
+
+            available = [i for i in available if i not in to_remove]
+
+        if len(selected) >= 2:
+            # Generate allocation for selected intervals
+            alloc = generate_weighted_allocation(selected, interval_scores)
+            if alloc and is_valid_allocation(alloc):
+                candidates.append(alloc)
+
+    # Deduplicate candidates
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        # Handle both dict and array formats
+        if isinstance(candidate, dict):
+            key = tuple(sorted((k, round(v, 2)) for k, v in candidate.items() if v > 0))
+        else:
+            key = tuple(round(v, 2) for v in candidate)
+        if key not in seen:
+            seen.add(key)
+            unique_candidates.append(candidate)
+
+    if len(unique_candidates) == 0:
+        # Fallback to naive allocation
+        return generate_naive_weights_as_dict(), 0.0, 0
+
+    # === Vectorized ROI calculation ===
+    # Build index matrix for analog years only
+    years = sorted(analog_indices_df['YEAR'].unique())
     n_years = len(years)
 
     if n_years == 0:
@@ -1148,7 +1282,7 @@ def run_analog_year_optimization(
     index_matrix = np.zeros((n_years, INTERVAL_RANGE))
 
     for y_idx, year in enumerate(years):
-        year_data = all_indices_df[all_indices_df['YEAR'] == year]
+        year_data = analog_indices_df[analog_indices_df['YEAR'] == year]
         for interval_idx, interval_name in enumerate(INTERVAL_ORDER_11):
             row = year_data[year_data['INTERVAL_NAME'] == interval_name]
             if not row.empty:
@@ -1156,18 +1290,19 @@ def run_analog_year_optimization(
             else:
                 index_matrix[y_idx, interval_idx] = 100.0  # Default to no shortfall
 
-    # Build premium rates array: (11,)
+    # Build premium rates array
     premium_rates_array = np.array([
         premium_rates.get(interval, 0) for interval in INTERVAL_ORDER_11
     ])
 
-    # Generate candidates - global search with custom interval range
-    candidates = []
-    for _ in range(iterations):
-        candidates.append(generate_random_valid_allocation(interval_count_range=interval_range_opt))
-
-    # Convert to batch array: (n_candidates, 11)
-    weights_batch = np.array(candidates)
+    # Convert candidates to batch array (handle both dict and array formats)
+    weights_batch = np.zeros((len(unique_candidates), INTERVAL_RANGE))
+    for i, candidate in enumerate(unique_candidates):
+        if isinstance(candidate, dict):
+            for j, interval in enumerate(INTERVAL_ORDER_11):
+                weights_batch[i, j] = candidate.get(interval, 0)
+        else:
+            weights_batch[i] = candidate
 
     # Vectorized ROI calculation
     roi_scores = calculate_vectorized_roi(
@@ -1186,7 +1321,82 @@ def run_analog_year_optimization(
         if best_weights[idx] > 0.001:
             best_allocation[interval] = round(best_weights[idx], 2)
 
-    return best_allocation, float(best_roi), len(candidates)
+    return best_allocation, float(best_roi), len(unique_candidates)
+
+
+def generate_weighted_allocation(selected_intervals, interval_scores):
+    """
+    Generate an allocation for selected intervals, weighting by their scores.
+    Higher-scoring intervals get more allocation (within 10-50% bounds).
+
+    Args:
+        selected_intervals: List of interval names to allocate to
+        interval_scores: Dict of interval -> score
+
+    Returns:
+        Dict of interval -> weight (as decimal, e.g., 0.25 for 25%)
+    """
+    if len(selected_intervals) == 0:
+        return None
+
+    # Get scores for selected intervals
+    scores = [max(0.1, interval_scores.get(i, 0.1)) for i in selected_intervals]
+    total_score = sum(scores)
+
+    # Calculate raw proportional weights
+    raw_weights = [s / total_score for s in scores]
+
+    # Apply constraints: each must be 10-50%, total must be 100%
+    # Start with proportional, then clamp and redistribute
+    weights = []
+    for w in raw_weights:
+        clamped = max(0.10, min(0.50, w))
+        weights.append(clamped)
+
+    # Normalize to sum to 1.0
+    total = sum(weights)
+    if total > 0:
+        weights = [w / total for w in weights]
+
+    # Round to whole percentages
+    weights = [round(w * 100) / 100 for w in weights]
+
+    # Fix rounding errors
+    diff = 1.0 - sum(weights)
+    if abs(diff) > 0.001:
+        # Add/subtract from largest weight
+        max_idx = weights.index(max(weights))
+        weights[max_idx] += diff
+
+    # Final validation
+    for w in weights:
+        if w > 0 and (w < 0.10 or w > 0.50):
+            # Fallback to equal distribution
+            equal_weight = round(1.0 / len(selected_intervals), 2)
+            weights = [equal_weight] * len(selected_intervals)
+            diff = 1.0 - sum(weights)
+            weights[0] += diff
+            break
+
+    # Build allocation dict
+    allocation = {interval: 0.0 for interval in INTERVAL_ORDER_11}
+    for i, interval in enumerate(selected_intervals):
+        allocation[interval] = weights[i]
+
+    return allocation
+
+
+def generate_naive_weights_as_dict():
+    """
+    Generate naive equal distribution as a dictionary.
+    Fallback when no valid candidates found.
+    """
+    selected_indices = [0, 2, 4, 6, 8]  # Jan-Feb, Mar-Apr, May-Jun, Jul-Aug, Sep-Oct
+    allocation = {interval: 0.0 for interval in INTERVAL_ORDER_11}
+    pct_each = 0.20
+    for idx in selected_indices:
+        allocation[INTERVAL_ORDER_11[idx]] = pct_each
+    return allocation
 
 
 def run_weather_mvo_optimization(
@@ -4464,6 +4674,275 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 key="download_weather3_csv"
                             )
 
+                        # ==============================================================
+                        # SCENARIO STRESS TEST
+                        # ==============================================================
+                        # Only show if all 4 strategies exist
+                        if ('champion_results' in st.session_state and st.session_state.champion_results and
+                            'challenger_results' in st.session_state and st.session_state.challenger_results and
+                            'weather_challenger_results' in st.session_state and st.session_state.weather_challenger_results and
+                            'weather_challenger_3_results' in st.session_state and st.session_state.weather_challenger_3_results):
+
+                            st.divider()
+                            st.markdown("### 📊 Scenario Stress Test")
+                            st.caption("Re-run the 4-way comparison under different conditions to validate your weather thesis.")
+
+                            # Get analog years from session state for the radio option
+                            analog_year_list_stress = [y['year'] for y in st.session_state.get('ps_analog_years', [])]
+                            weather_config_stress = st.session_state.get('ps_weather_config', {})
+
+                            # Build scenario description for analog years
+                            enso_text_stress = weather_config_stress.get('enso_regime', 'Selected')
+                            context_text_stress = weather_config_stress.get('historical_context', '')
+                            analog_label = f"Analog Years Only ({enso_text_stress}"
+                            if context_text_stress and not context_text_stress.startswith('Any'):
+                                analog_label += f" + {context_text_stress}"
+                            analog_label += ")"
+
+                            stress_scenario = st.radio(
+                                "Select scenario to test:",
+                                options=[
+                                    "All Years (Current Results)",
+                                    "La Niña Years Only",
+                                    "El Niño Years Only",
+                                    "Neutral Years Only",
+                                    analog_label,
+                                    "Custom Range"
+                                ],
+                                index=0,
+                                key="ps_stress_scenario"
+                            )
+
+                            # Custom range inputs (only show if selected)
+                            stress_start_year = start_year
+                            stress_end_year = end_year
+                            if stress_scenario == "Custom Range":
+                                col1, col2 = st.columns(2)
+                                stress_start_year = col1.selectbox("Start Year", list(range(1948, 2026)), index=62, key="ps_stress_start")
+                                stress_end_year = col2.selectbox("End Year", list(range(1948, 2026)), index=76, key="ps_stress_end")
+
+                            if st.button("🔬 Run Stress Test", key="ps_run_stress_test", type="secondary"):
+                                # Map radio selection to scenario filter
+                                scenario_map = {
+                                    "All Years (Current Results)": "All Years (except Current Year)",
+                                    "La Niña Years Only": "ENSO Phase: La Nina",
+                                    "El Niño Years Only": "ENSO Phase: El Nino",
+                                    "Neutral Years Only": "ENSO Phase: Neutral",
+                                    analog_label: "Analog Years",
+                                    "Custom Range": "Custom Range"
+                                }
+
+                                test_scenario = scenario_map.get(stress_scenario, "All Years (except Current Year)")
+
+                                with st.spinner(f"Running stress test: {stress_scenario}..."):
+
+                                    # Get stored allocations and acres for each strategy
+                                    champ_stress = st.session_state.champion_results
+                                    chall1_stress = st.session_state.challenger_results
+                                    chall2_stress = st.session_state.weather_challenger_results
+                                    chall3_stress = st.session_state.weather_challenger_3_results
+
+                                    # Helper function to run backtest for a strategy under the stress scenario
+                                    def run_stress_backtest(allocations, acres, grids, scenario_type):
+                                        df, grid_results, metrics = run_portfolio_backtest(
+                                            session=session,
+                                            selected_grids=grids,
+                                            grid_allocations=allocations,
+                                            grid_acres=acres,
+                                            start_year=stress_start_year if scenario_type == "Custom Range" else 1948,
+                                            end_year=stress_end_year if scenario_type == "Custom Range" else 2024,
+                                            coverage_level=coverage_level,
+                                            productivity_factor=productivity_factor,
+                                            intended_use=intended_use,
+                                            plan_code=plan_code,
+                                            scenario=test_scenario if scenario_type != analog_label else "Analog Years"
+                                        )
+
+                                        return metrics
+
+                                    # Run stress test for each strategy
+                                    stress_results = {}
+
+                                    stress_results['Champion'] = run_stress_backtest(
+                                        champ_stress['allocations'], champ_stress['acres'], champ_stress.get('grids', selected_grids),
+                                        stress_scenario
+                                    )
+
+                                    stress_results['Challenger 1'] = run_stress_backtest(
+                                        chall1_stress['allocations'], chall1_stress['acres'], chall1_stress.get('grids', selected_grids),
+                                        stress_scenario
+                                    )
+
+                                    stress_results['Challenger 2'] = run_stress_backtest(
+                                        chall2_stress['allocations'], chall2_stress['acres'], chall2_stress.get('grids', []),
+                                        stress_scenario
+                                    )
+
+                                    stress_results['Challenger 3'] = run_stress_backtest(
+                                        chall3_stress['allocations'], chall3_stress['acres'], chall3_stress.get('grids', []),
+                                        stress_scenario
+                                    )
+
+                                    st.session_state.stress_test_results = {
+                                        'scenario': stress_scenario,
+                                        'results': stress_results,
+                                        'analog_years_count': len(analog_year_list_stress) if stress_scenario == analog_label else None
+                                    }
+
+                                st.success("Stress test complete!")
+
+                            # Display Stress Test Results
+                            if 'stress_test_results' in st.session_state and st.session_state.stress_test_results:
+                                stress = st.session_state.stress_test_results
+                                results = stress['results']
+
+                                st.markdown(f"#### Results: {stress['scenario']}")
+
+                                # Get baseline (All Years) metrics for delta calculation
+                                champ_baseline = st.session_state.champion_results.get('metrics', {})
+                                chall1_baseline = st.session_state.challenger_results.get('metrics', {})
+                                chall2_baseline = st.session_state.weather_challenger_results.get('metrics', {})
+                                chall3_baseline = st.session_state.weather_challenger_3_results.get('metrics', {})
+
+                                # Build comparison table
+                                def format_roi(val):
+                                    return f"{val:.1%}" if val else "N/A"
+
+                                def format_delta(stress_val, baseline_val):
+                                    if stress_val is None or baseline_val is None:
+                                        return "N/A"
+                                    delta = stress_val - baseline_val
+                                    if delta > 0:
+                                        return f"+{delta:.1%}"
+                                    else:
+                                        return f"{delta:.1%}"
+
+                                champ_roi = results['Champion'].get('cumulative_roi', 0)
+                                chall1_roi = results['Challenger 1'].get('cumulative_roi', 0)
+                                chall2_roi = results['Challenger 2'].get('cumulative_roi', 0)
+                                chall3_roi = results['Challenger 3'].get('cumulative_roi', 0)
+
+                                # Create scenario label for table
+                                scenario_short = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "")
+
+                                comparison_data = {
+                                    'Metric': [
+                                        'ROI (All Years)',
+                                        f'ROI ({scenario_short})',
+                                        'Δ vs All Years',
+                                        'Δ vs Champion'
+                                    ],
+                                    'Champion': [
+                                        format_roi(champ_baseline.get('cumulative_roi', 0)),
+                                        format_roi(champ_roi),
+                                        format_delta(champ_roi, champ_baseline.get('cumulative_roi', 0)),
+                                        "—"
+                                    ],
+                                    'Challenger 1': [
+                                        format_roi(chall1_baseline.get('cumulative_roi', 0)),
+                                        format_roi(chall1_roi),
+                                        format_delta(chall1_roi, chall1_baseline.get('cumulative_roi', 0)),
+                                        format_delta(chall1_roi, champ_roi)
+                                    ],
+                                    'Challenger 2': [
+                                        format_roi(chall2_baseline.get('cumulative_roi', 0)),
+                                        format_roi(chall2_roi),
+                                        format_delta(chall2_roi, chall2_baseline.get('cumulative_roi', 0)),
+                                        format_delta(chall2_roi, champ_roi)
+                                    ],
+                                    'Challenger 3': [
+                                        format_roi(chall3_baseline.get('cumulative_roi', 0)),
+                                        format_roi(chall3_roi),
+                                        format_delta(chall3_roi, chall3_baseline.get('cumulative_roi', 0)),
+                                        format_delta(chall3_roi, champ_roi)
+                                    ]
+                                }
+
+                                comparison_df = pd.DataFrame(comparison_data)
+                                st.table(comparison_df.set_index('Metric'))
+
+                                # Generate thesis validation insight
+                                st.markdown("#### 💡 Thesis Validation")
+
+                                # Find best performer under stress scenario
+                                stress_rois = {
+                                    'Champion': champ_roi,
+                                    'Challenger 1': chall1_roi,
+                                    'Challenger 2': chall2_roi,
+                                    'Challenger 3': chall3_roi
+                                }
+                                best_stress = max(stress_rois, key=stress_rois.get)
+                                best_stress_roi = stress_rois[best_stress]
+
+                                # Find best performer under all years
+                                baseline_rois = {
+                                    'Champion': champ_baseline.get('cumulative_roi', 0),
+                                    'Challenger 1': chall1_baseline.get('cumulative_roi', 0),
+                                    'Challenger 2': chall2_baseline.get('cumulative_roi', 0),
+                                    'Challenger 3': chall3_baseline.get('cumulative_roi', 0)
+                                }
+                                best_baseline = max(baseline_rois, key=baseline_rois.get)
+
+                                # Calculate Weather Challenger advantage in stress vs baseline
+                                weather_advantage_stress = max(chall2_roi, chall3_roi) - champ_roi
+                                weather_advantage_baseline = max(
+                                    chall2_baseline.get('cumulative_roi', 0),
+                                    chall3_baseline.get('cumulative_roi', 0)
+                                ) - champ_baseline.get('cumulative_roi', 0)
+
+                                # Determine which weather challenger is better
+                                better_weather = "Challenger 3 (MVO)" if chall3_roi > chall2_roi else "Challenger 2 (Naive)"
+
+                                # Build insight message
+                                scenario_display = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "").replace("Years", "years")
+
+                                if weather_advantage_stress > weather_advantage_baseline + 0.02:  # Weather strategy shines
+                                    insight_msg = f"""
+**Your weather thesis is validated.** {better_weather} outperforms Champion by
+**{weather_advantage_stress:+.1%}** in {scenario_display} conditions, compared to only
+{weather_advantage_baseline:+.1%} across all years.
+
+This confirms your strategy is well-tuned for the selected market view.
+"""
+                                    st.success(insight_msg)
+                                elif weather_advantage_stress < weather_advantage_baseline - 0.02:  # Weather strategy underperforms
+                                    insight_msg = f"""
+**Caution: Your weather strategy underperforms in this scenario.** {better_weather} beats
+Champion by only {weather_advantage_stress:+.1%} in {scenario_display} conditions, worse than
+the {weather_advantage_baseline:+.1%} advantage across all years.
+
+This may indicate the strategy is not optimally tuned for these specific conditions,
+or that the analog years used for optimization don't represent this scenario well.
+"""
+                                    st.warning(insight_msg)
+                                else:  # Roughly equivalent
+                                    insight_msg = f"""
+**Performance is consistent across scenarios.** {better_weather} outperforms Champion
+by {weather_advantage_stress:+.1%} in {scenario_display} conditions, similar to the
+{weather_advantage_baseline:+.1%} advantage across all years.
+
+Your weather strategy appears robust and not overly dependent on specific conditions.
+"""
+                                    st.info(insight_msg)
+
+                                # Add scenario-specific warnings
+                                if "El Niño" in stress['scenario'] and weather_advantage_stress < 0:
+                                    st.warning(f"""
+⚠️ **Hedging Alert:** Your Weather Challengers underperform Champion by
+{abs(weather_advantage_stress):.1%} if El Niño conditions materialize.
+Consider whether your conviction in the La Niña thesis justifies this downside risk.
+""")
+
+                                # Download button for stress test
+                                stress_csv = comparison_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Stress Test Results",
+                                    data=stress_csv,
+                                    file_name=f"stress_test_{stress['scenario'].replace(' ', '_').lower()}.csv",
+                                    mime="text/csv",
+                                    key="download_stress_csv"
+                                )
+
                     elif 'ps_analog_years' in st.session_state:
                         st.warning("No analog years found matching your criteria. Try broadening your market view (e.g., set some filters to 'Any').")
 
@@ -6534,6 +7013,7 @@ def main():
             'challenger_results',
             'weather_challenger_results',
             'weather_challenger_3_results',
+            'stress_test_results',
             'ps_analog_years',
             'ps_weather_config',
             'ps_enable_weather',
