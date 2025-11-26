@@ -3049,6 +3049,128 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             key="download_changes_csv"
         )
 
+        # ==========================================================================
+        # PHASE 2: WEATHER VIEW CHALLENGERS (Only shows after Challenger 1 exists)
+        # ==========================================================================
+        st.divider()
+        st.markdown("### 🌦️ Add Weather View Challengers")
+        st.caption("Generate additional challengers optimized for a specific weather outlook. These use portfolio-aggregated analog years for apples-to-apples comparison.")
+
+        enable_weather_challengers = st.checkbox(
+            "Enable Weather View Challengers",
+            value=st.session_state.get('ps_enable_weather', False),
+            key="ps_enable_weather"
+        )
+
+        if enable_weather_challengers:
+            # --- Grid Selection for Weather Portfolio ---
+            st.markdown("**Step 2.1: Select Grids for Weather Portfolio**")
+            st.caption("Weather portfolio can use different grids than Champion. Default is Champion's grids.")
+
+            # Default to Champion's grids
+            champ_grids_for_weather = st.session_state.champion_results.get('grids', [])
+
+            weather_grids = st.multiselect(
+                "Weather Portfolio Grids",
+                options=all_grids,
+                default=champ_grids_for_weather,
+                max_selections=20,
+                key="ps_weather_grids"
+            )
+
+            if weather_grids:
+                # --- Acres per Grid ---
+                st.markdown("**Acres per Grid (Starting Population)**")
+                st.caption("Set acres for each grid. MVO optimization may adjust these.")
+
+                weather_acres = {}
+                acre_cols = st.columns(min(4, len(weather_grids)))
+                for idx, gid in enumerate(weather_grids):
+                    with acre_cols[idx % 4]:
+                        # Default to Champion acres if available, else use sidebar default
+                        champ_acres_map = st.session_state.champion_results.get('acres', {})
+                        default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                        weather_acres[gid] = st.number_input(
+                            f"{gid}",
+                            min_value=1,
+                            value=int(default_acres),
+                            step=10,
+                            key=f"ps_weather_acres_{gid}"
+                        )
+
+                st.markdown("---")
+
+                # --- Market View Definition ---
+                st.markdown("**Step 2.2: Define Market View**")
+                st.caption("Select the weather scenario you want to optimize for.")
+
+                mv_col1, mv_col2, mv_col3 = st.columns(3)
+
+                with mv_col1:
+                    enso_regime = st.selectbox(
+                        "ENSO Regime",
+                        options=["La Niña", "El Niño", "Neutral", "Any"],
+                        index=0,
+                        key="ps_weather_enso"
+                    )
+
+                with mv_col2:
+                    historical_context = st.selectbox(
+                        "Historical Context (Z-Score)",
+                        options=["Dry (< -0.25)", "Normal (-0.25 to +0.25)", "Wet (> +0.25)", "Any"],
+                        index=0,
+                        key="ps_weather_hist_context"
+                    )
+
+                with mv_col3:
+                    trajectory = st.selectbox(
+                        "Expected Trajectory",
+                        options=["Get Drier (< -0.2)", "Stay Stable (-0.2 to +0.2)", "Get Wetter (> +0.2)", "Any"],
+                        index=0,
+                        key="ps_weather_trajectory"
+                    )
+
+                st.markdown("---")
+
+                # --- Optimization Settings ---
+                st.markdown("**Step 2.3: Optimization Settings**")
+
+                opt_col1, opt_col2 = st.columns(2)
+
+                with opt_col1:
+                    weather_rank_by = st.selectbox(
+                        "Rank Best Allocations By",
+                        options=["Portfolio Return", "Risk-Adjusted Return", "Median ROI", "Win Rate"],
+                        index=0,
+                        key="ps_weather_rank_by"
+                    )
+
+                with opt_col2:
+                    weather_interval_range = st.slider(
+                        "Allowed Intervals per Grid",
+                        min_value=2,
+                        max_value=6,
+                        value=(2, 6),
+                        key="ps_weather_interval_range"
+                    )
+
+                st.markdown("---")
+
+                # --- Generate Button ---
+                if st.button("🌦️ Generate Weather Challengers", key="ps_generate_weather", type="primary"):
+                    st.info("Weather Challenger generation not yet implemented. Next prompt will add this logic.")
+
+                    # Store configuration in session state for next implementation
+                    st.session_state.weather_challenger_config = {
+                        'grids': weather_grids,
+                        'acres': weather_acres,
+                        'enso_regime': enso_regime,
+                        'historical_context': historical_context,
+                        'trajectory': trajectory,
+                        'rank_by': weather_rank_by,
+                        'interval_range': weather_interval_range
+                    }
+                    st.success("Configuration saved. Ready for implementation.")
 
 
 # =============================================================================
