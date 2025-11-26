@@ -178,10 +178,18 @@ def load_all_indices(_session, grid_id):
     return df
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_year=2024):
+def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_year=2024, analog_year_list=None):
     """
     Filter indices dataframe by scenario selection.
     Cached for performance when re-running with same parameters.
+
+    Args:
+        all_indices_df: DataFrame with all rainfall indices
+        scenario: Scenario name for filtering
+        start_year: Start year for custom range
+        end_year: End year for custom range
+        analog_year_list: List of years to filter to (for 'Analog Years' scenario).
+                         MUST be passed as parameter to preserve caching.
     """
     if scenario == 'All Years (except Current Year)':
         return all_indices_df[all_indices_df['YEAR'] < 2025]
@@ -198,9 +206,7 @@ def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_ye
             return all_indices_df[(all_indices_df['OPTICAL_MAPPING_CPC'] == 'Neutral') & (all_indices_df['YEAR'] < 2025)]
         return all_indices_df[all_indices_df['YEAR'] < 2025]
     elif scenario == 'Analog Years':
-        # Filter to only analog years from session state
-        analog_years = st.session_state.get('ps_analog_years', [])
-        analog_year_list = [y['year'] for y in analog_years]
+        # Filter to only analog years - passed as parameter to preserve cache
         if analog_year_list:
             return all_indices_df[all_indices_df['YEAR'].isin(analog_year_list)]
         return all_indices_df[all_indices_df['YEAR'] < 2025]
@@ -2075,15 +2081,23 @@ def optimize_without_budget(
 
 
 def render_allocation_inputs(key_prefix):
-    """Creates the 11-row data editor for interval allocation."""
+    """Creates the 11-row data editor for interval allocation with persistent state."""
     st.subheader("Interval Allocation")
 
-    # Check if there's preset allocation data for this key_prefix
+    # Use session state to persist edits across reruns
+    editor_state_key = f"{key_prefix}_editor_state"
     preset_key = f"{key_prefix}_preset_allocation"
-    if preset_key in st.session_state:
+
+    # Priority: 1. Existing editor state, 2. Preset, 3. Default
+    if editor_state_key in st.session_state:
+        # Use existing editor state (persists user edits)
+        alloc_data = st.session_state[editor_state_key]
+    elif preset_key in st.session_state:
+        # Convert preset from decimal to percentage format
         preset_alloc = st.session_state[preset_key]
-        # Convert from decimal to percentage format - round to whole numbers
         alloc_data = {interval: round(preset_alloc.get(interval, 0.0) * 100) for interval in INTERVAL_ORDER_11}
+        # Store so we don't recalculate next time
+        st.session_state[editor_state_key] = alloc_data
     else:
         # Default allocation
         alloc_data = {
@@ -2091,6 +2105,7 @@ def render_allocation_inputs(key_prefix):
             'May-Jun': 0, 'Jun-Jul': 0, 'Jul-Aug': 0, 'Aug-Sep': 0,
             'Sep-Oct': 0, 'Oct-Nov': 0, 'Nov-Dec': 0
         }
+        st.session_state[editor_state_key] = alloc_data
 
     df_alloc = pd.DataFrame(list(alloc_data.items()), columns=['Interval', 'Percent of Value'])
 
@@ -2107,8 +2122,11 @@ def render_allocation_inputs(key_prefix):
         }
     )
 
-    # --- Validation ---
+    # --- Validation and State Persistence ---
     alloc_dict = pd.Series(edited_df['Percent of Value'].values, index=edited_df['Interval']).to_dict()
+
+    # Persist edited values to session state (survives widget reruns)
+    st.session_state[editor_state_key] = alloc_dict
 
     # Round to integers to ensure whole numbers
     alloc_dict = {k: round(v) for k, v in alloc_dict.items()}
@@ -2220,9 +2238,7 @@ def render_tab2(session, grid_id, intended_use, productivity_factor, total_insur
                 "dollar_amount_of_protection": dollar_amount_of_protection, "total_policy_protection": total_policy_protection,
                 "subsidy_percent": subsidy_percent
             }
-            # Clear other tab results
-            st.session_state.tab4_results = None
-            st.session_state.tab5_results = None
+            # NOTE: Do NOT clear other tab results - preserves user state across tabs
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
@@ -2322,11 +2338,16 @@ def render_tab2(session, grid_id, intended_use, productivity_factor, total_insur
 def run_portfolio_backtest(
     session, selected_grids, grid_allocations, grid_acres,
     start_year, end_year, coverage_level, productivity_factor,
-    intended_use, plan_code, scenario='All Years (except Current Year)'
+    intended_use, plan_code, scenario='All Years (except Current Year)',
+    analog_year_list=None
 ):
     """
     Run a historical backtest for a portfolio of grids.
     Returns: (portfolio_results_df, grid_results_dict, metrics_dict)
+
+    Args:
+        analog_year_list: Optional list of years for 'Analog Years' scenario.
+                         Pass explicitly to preserve caching.
     """
     grid_results = {}
     portfolio_yearly = {}
@@ -2343,8 +2364,10 @@ def run_portfolio_backtest(
 
             all_indices_df = load_all_indices(session, gid)
 
-            # Apply scenario filter
-            filtered_df = filter_indices_by_scenario(all_indices_df, scenario, start_year, end_year)
+            # Apply scenario filter - pass analog_year_list to preserve caching
+            filtered_df = filter_indices_by_scenario(
+                all_indices_df, scenario, start_year, end_year, analog_year_list=analog_year_list
+            )
 
             allocation = grid_allocations.get(gid, {})
             year_results = []
@@ -3064,6 +3087,18 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         """Simple callback that just sets a flag - actual loading happens in main function."""
         st.session_state.ps_kr_load_requested = True
 
+    def on_grid_selection_change():
+        """Callback when grid selection changes - preserves existing results.
+        User might just be exploring different portfolios, don't clear results.
+        """
+        # Only log the change, don't clear anything - results persist
+        pass
+
+    def on_scenario_change():
+        """Callback when scenario changes - preserves results for comparison."""
+        # Results persist so user can compare across scenarios
+        pass
+
     st.subheader("Portfolio Strategy: Champion vs. Challenger")
 
     # ==========================================================================
@@ -3142,7 +3177,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             options=all_grids,
             default=default_grids,
             max_selections=20,
-            key="ps_grids"
+            key="ps_grids",
+            on_change=on_grid_selection_change  # Preserves results on change
         )
 
     if not selected_grids:
@@ -3160,7 +3196,12 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             'ENSO Phase: Neutral',
             'Custom Range'
         ]
-        selected_scenario = st.selectbox("Scenario", scenario_options, key="ps_scenario")
+        selected_scenario = st.selectbox(
+            "Scenario",
+            scenario_options,
+            key="ps_scenario",
+            on_change=on_scenario_change  # Preserves results on change
+        )
 
     with col2:
         coverage_level = st.selectbox(
@@ -3272,21 +3313,37 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     if 'ps_alloc_expander_opened' not in st.session_state:
         st.session_state.ps_alloc_expander_opened = False  # Start collapsed
 
-    # Champion Acreage Configuration
+    # Champion Acreage Configuration - wrapped in form to batch updates and prevent reruns
     with st.expander("Champion Acreage per Grid", expanded=st.session_state.ps_acres_expander_opened):
+        with st.form(key="champion_acres_form"):
+            st.caption("Edit acreage values and click 'Apply Acreage' to save changes.")
+            champion_acres_form = {}
+            cols = st.columns(min(4, len(selected_grids)))
+            for idx, gid in enumerate(selected_grids):
+                with cols[idx % 4]:
+                    numeric_id = extract_numeric_grid_id(gid)
+                    default_acres = KING_RANCH_PRESET['acres'].get(numeric_id, total_insured_acres)
+                    # Read from session_state if already set, otherwise use default
+                    current_acres = st.session_state.get(f"ps_champ_acres_{gid}", default_acres)
+                    champion_acres_form[gid] = st.number_input(
+                        f"{gid}",
+                        min_value=1,
+                        value=int(current_acres),
+                        step=10,
+                        key=f"form_champ_acres_{gid}"
+                    )
+
+            if st.form_submit_button("Apply Acreage", type="primary"):
+                for gid in selected_grids:
+                    st.session_state[f"ps_champ_acres_{gid}"] = champion_acres_form[gid]
+                st.success("Acreage updated!")
+
+        # Read actual champion_acres from session_state (handles both form and preset updates)
         champion_acres = {}
-        cols = st.columns(min(4, len(selected_grids)))
-        for idx, gid in enumerate(selected_grids):
-            with cols[idx % 4]:
-                numeric_id = extract_numeric_grid_id(gid)
-                default_acres = KING_RANCH_PRESET['acres'].get(numeric_id, total_insured_acres)
-                champion_acres[gid] = st.number_input(
-                    f"{gid}",
-                    min_value=1,
-                    value=default_acres,
-                    step=10,
-                    key=f"ps_champ_acres_{gid}"
-                )
+        for gid in selected_grids:
+            numeric_id = extract_numeric_grid_id(gid)
+            default_acres = KING_RANCH_PRESET['acres'].get(numeric_id, total_insured_acres)
+            champion_acres[gid] = st.session_state.get(f"ps_champ_acres_{gid}", default_acres)
 
     # Champion Interval Allocations
     champion_allocations = {}
@@ -3385,23 +3442,35 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     for gid in selected_grids:
         challenger_acres[gid] = champion_acres.get(gid, total_insured_acres / len(selected_grids))
 
-    # Render manual inputs ONLY for incremental grids
+    # Render manual inputs ONLY for incremental grids - wrapped in form to batch updates
     if incremental_grids:
         st.markdown("**Incremental Grid Acreage:**")
-        st.caption("Set acres for each new grid being added to the Challenger portfolio.")
 
-        default_incremental_acres = total_insured_acres / len(selected_grids)  # Use avg of base as default
-        acre_cols = st.columns(min(4, len(incremental_grids)))
+        with st.form(key="incremental_acres_form"):
+            st.caption("Set acres for each new grid being added to the Challenger portfolio. Click 'Apply' to save.")
+            default_incremental_acres = total_insured_acres / len(selected_grids)  # Use avg of base as default
+            incremental_acres_form = {}
+            acre_cols = st.columns(min(4, len(incremental_grids)))
 
-        for idx, gid in enumerate(incremental_grids):
-            with acre_cols[idx % 4]:
-                challenger_acres[gid] = st.number_input(
-                    f"{gid}",
-                    min_value=1,
-                    value=int(default_incremental_acres),
-                    step=10,
-                    key=f"ps_incr_acres_{gid}"
-                )
+            for idx, gid in enumerate(incremental_grids):
+                with acre_cols[idx % 4]:
+                    current_incr_acres = st.session_state.get(f"ps_incr_acres_{gid}", int(default_incremental_acres))
+                    incremental_acres_form[gid] = st.number_input(
+                        f"{gid}",
+                        min_value=1,
+                        value=int(current_incr_acres),
+                        step=10,
+                        key=f"form_incr_acres_{gid}"
+                    )
+
+            if st.form_submit_button("Apply Incremental Acreage", type="secondary"):
+                for gid in incremental_grids:
+                    st.session_state[f"ps_incr_acres_{gid}"] = incremental_acres_form[gid]
+                st.success("Incremental acreage updated!")
+
+        # Read actual incremental acres from session_state
+        for gid in incremental_grids:
+            challenger_acres[gid] = st.session_state.get(f"ps_incr_acres_{gid}", int(default_incremental_acres))
 
     # Show summary of all acres
     total_challenger_acres = sum(challenger_acres.values())
@@ -3881,24 +3950,38 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             )
 
             if weather_grids:
-                # --- Acres per Grid ---
+                # --- Acres per Grid - wrapped in form to batch updates ---
                 st.markdown("**Acres per Grid (Starting Population)**")
-                st.caption("Set acres for each grid. MVO optimization may adjust these.")
 
+                with st.form(key="weather_acres_form"):
+                    st.caption("Set acres for each grid. MVO optimization may adjust these. Click 'Apply' to save.")
+                    weather_acres_form = {}
+                    acre_cols = st.columns(min(4, len(weather_grids)))
+                    for idx, gid in enumerate(weather_grids):
+                        with acre_cols[idx % 4]:
+                            # Default to Champion acres if available, else use sidebar default
+                            champ_acres_map = st.session_state.champion_results.get('acres', {})
+                            default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                            current_weather_acres = st.session_state.get(f"ps_weather_acres_{gid}", int(default_acres))
+                            weather_acres_form[gid] = st.number_input(
+                                f"{gid}",
+                                min_value=1,
+                                value=int(current_weather_acres),
+                                step=10,
+                                key=f"form_weather_acres_{gid}"
+                            )
+
+                    if st.form_submit_button("Apply Weather Acreage", type="secondary"):
+                        for gid in weather_grids:
+                            st.session_state[f"ps_weather_acres_{gid}"] = weather_acres_form[gid]
+                        st.success("Weather portfolio acreage updated!")
+
+                # Read actual weather_acres from session_state
                 weather_acres = {}
-                acre_cols = st.columns(min(4, len(weather_grids)))
-                for idx, gid in enumerate(weather_grids):
-                    with acre_cols[idx % 4]:
-                        # Default to Champion acres if available, else use sidebar default
-                        champ_acres_map = st.session_state.champion_results.get('acres', {})
-                        default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
-                        weather_acres[gid] = st.number_input(
-                            f"{gid}",
-                            min_value=1,
-                            value=int(default_acres),
-                            step=10,
-                            key=f"ps_weather_acres_{gid}"
-                        )
+                for gid in weather_grids:
+                    champ_acres_map = st.session_state.champion_results.get('acres', {})
+                    default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                    weather_acres[gid] = st.session_state.get(f"ps_weather_acres_{gid}", int(default_acres))
 
                 st.markdown("---")
 
@@ -7295,7 +7378,19 @@ def main():
         st.session_state.tab4_results = None
     if 'tab5_results' not in st.session_state:
         st.session_state.tab5_results = None
-    
+
+    # Initialize Champion/Challenger results persistence (prevents accidental clearing)
+    if 'champion_results' not in st.session_state:
+        st.session_state.champion_results = None
+    if 'challenger_results' not in st.session_state:
+        st.session_state.challenger_results = None
+    if 'weather_challenger_results' not in st.session_state:
+        st.session_state.weather_challenger_results = None
+    if 'weather_challenger_3_results' not in st.session_state:
+        st.session_state.weather_challenger_3_results = None
+    if 'stress_test_results' not in st.session_state:
+        st.session_state.stress_test_results = None
+
     try:
         default_grid_index = valid_grids.index(st.session_state.grid_id)
     except (ValueError, AttributeError):
