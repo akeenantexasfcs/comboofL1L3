@@ -197,6 +197,13 @@ def filter_indices_by_scenario(all_indices_df, scenario, start_year=1948, end_ye
         if 'OPTICAL_MAPPING_CPC' in all_indices_df.columns:
             return all_indices_df[(all_indices_df['OPTICAL_MAPPING_CPC'] == 'Neutral') & (all_indices_df['YEAR'] < 2025)]
         return all_indices_df[all_indices_df['YEAR'] < 2025]
+    elif scenario == 'Analog Years':
+        # Filter to only analog years from session state
+        analog_years = st.session_state.get('ps_analog_years', [])
+        analog_year_list = [y['year'] for y in analog_years]
+        if analog_year_list:
+            return all_indices_df[all_indices_df['YEAR'].isin(analog_year_list)]
+        return all_indices_df[all_indices_df['YEAR'] < 2025]
     else:  # Select my own interval
         return all_indices_df[(all_indices_df['YEAR'] >= start_year) & (all_indices_df['YEAR'] <= end_year)]
 
@@ -4464,6 +4471,275 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 key="download_weather3_csv"
                             )
 
+                        # ==============================================================
+                        # SCENARIO STRESS TEST
+                        # ==============================================================
+                        # Only show if all 4 strategies exist
+                        if ('champion_results' in st.session_state and st.session_state.champion_results and
+                            'challenger_results' in st.session_state and st.session_state.challenger_results and
+                            'weather_challenger_results' in st.session_state and st.session_state.weather_challenger_results and
+                            'weather_challenger_3_results' in st.session_state and st.session_state.weather_challenger_3_results):
+
+                            st.divider()
+                            st.markdown("### 📊 Scenario Stress Test")
+                            st.caption("Re-run the 4-way comparison under different conditions to validate your weather thesis.")
+
+                            # Get analog years from session state for the radio option
+                            analog_year_list_stress = [y['year'] for y in st.session_state.get('ps_analog_years', [])]
+                            weather_config_stress = st.session_state.get('ps_weather_config', {})
+
+                            # Build scenario description for analog years
+                            enso_text_stress = weather_config_stress.get('enso_regime', 'Selected')
+                            context_text_stress = weather_config_stress.get('historical_context', '')
+                            analog_label = f"Analog Years Only ({enso_text_stress}"
+                            if context_text_stress and not context_text_stress.startswith('Any'):
+                                analog_label += f" + {context_text_stress}"
+                            analog_label += ")"
+
+                            stress_scenario = st.radio(
+                                "Select scenario to test:",
+                                options=[
+                                    "All Years (Current Results)",
+                                    "La Niña Years Only",
+                                    "El Niño Years Only",
+                                    "Neutral Years Only",
+                                    analog_label,
+                                    "Custom Range"
+                                ],
+                                index=0,
+                                key="ps_stress_scenario"
+                            )
+
+                            # Custom range inputs (only show if selected)
+                            stress_start_year = start_year
+                            stress_end_year = end_year
+                            if stress_scenario == "Custom Range":
+                                col1, col2 = st.columns(2)
+                                stress_start_year = col1.selectbox("Start Year", list(range(1948, 2026)), index=62, key="ps_stress_start")
+                                stress_end_year = col2.selectbox("End Year", list(range(1948, 2026)), index=76, key="ps_stress_end")
+
+                            if st.button("🔬 Run Stress Test", key="ps_run_stress_test", type="secondary"):
+                                # Map radio selection to scenario filter
+                                scenario_map = {
+                                    "All Years (Current Results)": "All Years (except Current Year)",
+                                    "La Niña Years Only": "ENSO Phase: La Nina",
+                                    "El Niño Years Only": "ENSO Phase: El Nino",
+                                    "Neutral Years Only": "ENSO Phase: Neutral",
+                                    analog_label: "Analog Years",
+                                    "Custom Range": "Custom Range"
+                                }
+
+                                test_scenario = scenario_map.get(stress_scenario, "All Years (except Current Year)")
+
+                                with st.spinner(f"Running stress test: {stress_scenario}..."):
+
+                                    # Get stored allocations and acres for each strategy
+                                    champ_stress = st.session_state.champion_results
+                                    chall1_stress = st.session_state.challenger_results
+                                    chall2_stress = st.session_state.weather_challenger_results
+                                    chall3_stress = st.session_state.weather_challenger_3_results
+
+                                    # Helper function to run backtest for a strategy under the stress scenario
+                                    def run_stress_backtest(allocations, acres, grids, scenario_type):
+                                        df, grid_results, metrics = run_portfolio_backtest(
+                                            session=session,
+                                            selected_grids=grids,
+                                            grid_allocations=allocations,
+                                            grid_acres=acres,
+                                            start_year=stress_start_year if scenario_type == "Custom Range" else 1948,
+                                            end_year=stress_end_year if scenario_type == "Custom Range" else 2024,
+                                            coverage_level=coverage_level,
+                                            productivity_factor=productivity_factor,
+                                            intended_use=intended_use,
+                                            plan_code=plan_code,
+                                            scenario=test_scenario if scenario_type != analog_label else "Analog Years"
+                                        )
+
+                                        return metrics
+
+                                    # Run stress test for each strategy
+                                    stress_results = {}
+
+                                    stress_results['Champion'] = run_stress_backtest(
+                                        champ_stress['allocations'], champ_stress['acres'], champ_stress.get('grids', selected_grids),
+                                        stress_scenario
+                                    )
+
+                                    stress_results['Challenger 1'] = run_stress_backtest(
+                                        chall1_stress['allocations'], chall1_stress['acres'], chall1_stress.get('grids', selected_grids),
+                                        stress_scenario
+                                    )
+
+                                    stress_results['Challenger 2'] = run_stress_backtest(
+                                        chall2_stress['allocations'], chall2_stress['acres'], chall2_stress.get('grids', []),
+                                        stress_scenario
+                                    )
+
+                                    stress_results['Challenger 3'] = run_stress_backtest(
+                                        chall3_stress['allocations'], chall3_stress['acres'], chall3_stress.get('grids', []),
+                                        stress_scenario
+                                    )
+
+                                    st.session_state.stress_test_results = {
+                                        'scenario': stress_scenario,
+                                        'results': stress_results,
+                                        'analog_years_count': len(analog_year_list_stress) if stress_scenario == analog_label else None
+                                    }
+
+                                st.success("Stress test complete!")
+
+                            # Display Stress Test Results
+                            if 'stress_test_results' in st.session_state and st.session_state.stress_test_results:
+                                stress = st.session_state.stress_test_results
+                                results = stress['results']
+
+                                st.markdown(f"#### Results: {stress['scenario']}")
+
+                                # Get baseline (All Years) metrics for delta calculation
+                                champ_baseline = st.session_state.champion_results.get('metrics', {})
+                                chall1_baseline = st.session_state.challenger_results.get('metrics', {})
+                                chall2_baseline = st.session_state.weather_challenger_results.get('metrics', {})
+                                chall3_baseline = st.session_state.weather_challenger_3_results.get('metrics', {})
+
+                                # Build comparison table
+                                def format_roi(val):
+                                    return f"{val:.1%}" if val else "N/A"
+
+                                def format_delta(stress_val, baseline_val):
+                                    if stress_val is None or baseline_val is None:
+                                        return "N/A"
+                                    delta = stress_val - baseline_val
+                                    if delta > 0:
+                                        return f"+{delta:.1%}"
+                                    else:
+                                        return f"{delta:.1%}"
+
+                                champ_roi = results['Champion'].get('cumulative_roi', 0)
+                                chall1_roi = results['Challenger 1'].get('cumulative_roi', 0)
+                                chall2_roi = results['Challenger 2'].get('cumulative_roi', 0)
+                                chall3_roi = results['Challenger 3'].get('cumulative_roi', 0)
+
+                                # Create scenario label for table
+                                scenario_short = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "")
+
+                                comparison_data = {
+                                    'Metric': [
+                                        'ROI (All Years)',
+                                        f'ROI ({scenario_short})',
+                                        'Δ vs All Years',
+                                        'Δ vs Champion'
+                                    ],
+                                    'Champion': [
+                                        format_roi(champ_baseline.get('cumulative_roi', 0)),
+                                        format_roi(champ_roi),
+                                        format_delta(champ_roi, champ_baseline.get('cumulative_roi', 0)),
+                                        "—"
+                                    ],
+                                    'Challenger 1': [
+                                        format_roi(chall1_baseline.get('cumulative_roi', 0)),
+                                        format_roi(chall1_roi),
+                                        format_delta(chall1_roi, chall1_baseline.get('cumulative_roi', 0)),
+                                        format_delta(chall1_roi, champ_roi)
+                                    ],
+                                    'Challenger 2': [
+                                        format_roi(chall2_baseline.get('cumulative_roi', 0)),
+                                        format_roi(chall2_roi),
+                                        format_delta(chall2_roi, chall2_baseline.get('cumulative_roi', 0)),
+                                        format_delta(chall2_roi, champ_roi)
+                                    ],
+                                    'Challenger 3': [
+                                        format_roi(chall3_baseline.get('cumulative_roi', 0)),
+                                        format_roi(chall3_roi),
+                                        format_delta(chall3_roi, chall3_baseline.get('cumulative_roi', 0)),
+                                        format_delta(chall3_roi, champ_roi)
+                                    ]
+                                }
+
+                                comparison_df = pd.DataFrame(comparison_data)
+                                st.table(comparison_df.set_index('Metric'))
+
+                                # Generate thesis validation insight
+                                st.markdown("#### 💡 Thesis Validation")
+
+                                # Find best performer under stress scenario
+                                stress_rois = {
+                                    'Champion': champ_roi,
+                                    'Challenger 1': chall1_roi,
+                                    'Challenger 2': chall2_roi,
+                                    'Challenger 3': chall3_roi
+                                }
+                                best_stress = max(stress_rois, key=stress_rois.get)
+                                best_stress_roi = stress_rois[best_stress]
+
+                                # Find best performer under all years
+                                baseline_rois = {
+                                    'Champion': champ_baseline.get('cumulative_roi', 0),
+                                    'Challenger 1': chall1_baseline.get('cumulative_roi', 0),
+                                    'Challenger 2': chall2_baseline.get('cumulative_roi', 0),
+                                    'Challenger 3': chall3_baseline.get('cumulative_roi', 0)
+                                }
+                                best_baseline = max(baseline_rois, key=baseline_rois.get)
+
+                                # Calculate Weather Challenger advantage in stress vs baseline
+                                weather_advantage_stress = max(chall2_roi, chall3_roi) - champ_roi
+                                weather_advantage_baseline = max(
+                                    chall2_baseline.get('cumulative_roi', 0),
+                                    chall3_baseline.get('cumulative_roi', 0)
+                                ) - champ_baseline.get('cumulative_roi', 0)
+
+                                # Determine which weather challenger is better
+                                better_weather = "Challenger 3 (MVO)" if chall3_roi > chall2_roi else "Challenger 2 (Naive)"
+
+                                # Build insight message
+                                scenario_display = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "").replace("Years", "years")
+
+                                if weather_advantage_stress > weather_advantage_baseline + 0.02:  # Weather strategy shines
+                                    insight_msg = f"""
+**Your weather thesis is validated.** {better_weather} outperforms Champion by
+**{weather_advantage_stress:+.1%}** in {scenario_display} conditions, compared to only
+{weather_advantage_baseline:+.1%} across all years.
+
+This confirms your strategy is well-tuned for the selected market view.
+"""
+                                    st.success(insight_msg)
+                                elif weather_advantage_stress < weather_advantage_baseline - 0.02:  # Weather strategy underperforms
+                                    insight_msg = f"""
+**Caution: Your weather strategy underperforms in this scenario.** {better_weather} beats
+Champion by only {weather_advantage_stress:+.1%} in {scenario_display} conditions, worse than
+the {weather_advantage_baseline:+.1%} advantage across all years.
+
+This may indicate the strategy is not optimally tuned for these specific conditions,
+or that the analog years used for optimization don't represent this scenario well.
+"""
+                                    st.warning(insight_msg)
+                                else:  # Roughly equivalent
+                                    insight_msg = f"""
+**Performance is consistent across scenarios.** {better_weather} outperforms Champion
+by {weather_advantage_stress:+.1%} in {scenario_display} conditions, similar to the
+{weather_advantage_baseline:+.1%} advantage across all years.
+
+Your weather strategy appears robust and not overly dependent on specific conditions.
+"""
+                                    st.info(insight_msg)
+
+                                # Add scenario-specific warnings
+                                if "El Niño" in stress['scenario'] and weather_advantage_stress < 0:
+                                    st.warning(f"""
+⚠️ **Hedging Alert:** Your Weather Challengers underperform Champion by
+{abs(weather_advantage_stress):.1%} if El Niño conditions materialize.
+Consider whether your conviction in the La Niña thesis justifies this downside risk.
+""")
+
+                                # Download button for stress test
+                                stress_csv = comparison_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Stress Test Results",
+                                    data=stress_csv,
+                                    file_name=f"stress_test_{stress['scenario'].replace(' ', '_').lower()}.csv",
+                                    mime="text/csv",
+                                    key="download_stress_csv"
+                                )
+
                     elif 'ps_analog_years' in st.session_state:
                         st.warning("No analog years found matching your criteria. Try broadening your market view (e.g., set some filters to 'Any').")
 
@@ -6534,6 +6810,7 @@ def main():
             'challenger_results',
             'weather_challenger_results',
             'weather_challenger_3_results',
+            'stress_test_results',
             'ps_analog_years',
             'ps_weather_config',
             'ps_enable_weather',
