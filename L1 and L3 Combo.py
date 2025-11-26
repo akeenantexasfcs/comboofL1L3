@@ -1112,7 +1112,8 @@ def run_fast_optimization_core(
 
 def run_analog_year_optimization(
     session, grid_id, analog_years, plan_code, productivity_factor,
-    acres, intended_use, coverage_level, iterations, interval_range_opt
+    acres, intended_use, coverage_level, iterations, interval_range_opt,
+    objective='cumulative_roi'
 ):
     """
     Run optimization for a single grid using ONLY the specified analog years.
@@ -1132,6 +1133,7 @@ def run_analog_year_optimization(
         coverage_level: Coverage level (e.g., 0.80)
         iterations: Number of iterations for optimization
         interval_range_opt: Tuple of (min, max) active intervals
+        objective: Optimization objective - 'cumulative_roi', 'median_roi', 'profitable_pct', or 'risk_adj_ret'
 
     Returns:
         Tuple of (best_allocation_dict, best_roi, strategies_tested)
@@ -1314,14 +1316,57 @@ def run_analog_year_optimization(
         else:
             weights_batch[i] = candidate
 
-    # Vectorized ROI calculation
+    # Vectorized ROI calculation - cumulative ROI for default/fallback
     roi_scores = calculate_vectorized_roi(
         weights_batch, index_matrix, premium_rates_array,
         coverage_level, subsidy, total_protection
     )
 
-    # Find best
-    best_idx = np.argmax(roi_scores)
+    # For non-cumulative objectives, calculate per-year ROI for each candidate
+    if objective != 'cumulative_roi':
+        n_candidates = weights_batch.shape[0]
+
+        # Calculate protection and premium per interval for each candidate
+        interval_protection = weights_batch * total_protection
+        total_premium_per_interval = interval_protection * premium_rates_array
+        producer_premium_per_interval = total_premium_per_interval * (1 - subsidy)
+        annual_premium = producer_premium_per_interval.sum(axis=1)  # (n_candidates,)
+
+        trigger = coverage_level * 100
+        shortfall_pct = np.maximum(0, (trigger - index_matrix) / trigger)  # (n_years, 11)
+
+        # Calculate per-year ROI for each candidate
+        # yearly_roi[c, y] = (indemnity[c, y] - premium[c]) / premium[c]
+        yearly_roi = np.zeros((n_candidates, n_years))
+
+        for c_idx in range(n_candidates):
+            prem = annual_premium[c_idx]
+            if prem <= 0:
+                yearly_roi[c_idx, :] = -1.0
+                continue
+
+            for y_idx in range(n_years):
+                year_indemnity = np.sum(shortfall_pct[y_idx, :] * interval_protection[c_idx, :])
+                yearly_roi[c_idx, y_idx] = (year_indemnity - prem) / prem
+
+        # Calculate objective scores based on selection
+        if objective == 'median_roi':
+            objective_scores = np.median(yearly_roi, axis=1)
+        elif objective == 'profitable_pct':
+            objective_scores = np.mean(yearly_roi > 0, axis=1)  # Fraction of profitable years
+        elif objective == 'risk_adj_ret':
+            # Risk-adjusted return = mean / std (Sharpe-like ratio)
+            means = np.mean(yearly_roi, axis=1)
+            stds = np.std(yearly_roi, axis=1)
+            stds = np.where(stds == 0, 1e-9, stds)  # Avoid division by zero
+            objective_scores = means / stds
+        else:
+            objective_scores = roi_scores  # Fallback to cumulative
+
+        best_idx = np.argmax(objective_scores)
+    else:
+        best_idx = np.argmax(roi_scores)
+
     best_weights = weights_batch[best_idx]
     best_roi = roi_scores[best_idx]
 
@@ -3542,13 +3587,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         with mvo_col2:
             max_turnover = st.slider(
                 "Max Turnover",
-                min_value=0.00,
-                max_value=1.00,
-                value=0.20,
-                step=0.05,
-                help="How much each grid's allocation can change. 0.00 = no changes allowed, 1.00 = full reallocation allowed.",
+                min_value=0,
+                max_value=100,
+                value=20,
+                step=5,
+                format="%d%%",
+                help="How much each grid's allocation can change. 0% = no changes allowed, 100% = full reallocation allowed.",
                 key="ps_challenger_turnover"
-            )
+            ) / 100.0  # Convert back to decimal for calculations
         st.info("MVO will redistribute acres across grids based on historical correlations and returns.")
 
     st.divider()
@@ -4227,14 +4273,34 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         # --- Interval Strategy ---
                         st.markdown("**Interval Strategy**")
 
-                        weather3_iteration_map = {'Fast': 500, 'Standard': 3000, 'Thorough': 7000, 'Maximum': 15000}
-                        weather3_search_depth_key = st.select_slider(
-                            "Search Depth",
-                            options=list(weather3_iteration_map.keys()),
-                            value='Standard',
-                            key="ps_weather3_depth"
-                        )
-                        weather3_search_iterations = weather3_iteration_map[weather3_search_depth_key]
+                        interval_strat_col1, interval_strat_col2 = st.columns(2)
+
+                        with interval_strat_col1:
+                            weather3_iteration_map = {'Fast': 500, 'Standard': 3000, 'Thorough': 7000, 'Maximum': 15000}
+                            weather3_search_depth_key = st.select_slider(
+                                "Search Depth",
+                                options=list(weather3_iteration_map.keys()),
+                                value='Standard',
+                                key="ps_weather3_depth"
+                            )
+                            weather3_search_iterations = weather3_iteration_map[weather3_search_depth_key]
+
+                        with interval_strat_col2:
+                            weather3_objective = st.selectbox(
+                                "Optimization Objective",
+                                options=["Cumulative ROI", "Median ROI", "Win Rate", "Risk-Adjusted Return"],
+                                index=0,
+                                help="What metric to maximize when selecting the best interval allocation. Cumulative ROI = total returns, Median ROI = typical year, Win Rate = % profitable years, Risk-Adjusted = return per unit risk.",
+                                key="ps_weather3_objective"
+                            )
+                            # Map display names to internal values
+                            weather3_objective_map = {
+                                "Cumulative ROI": "cumulative_roi",
+                                "Median ROI": "median_roi",
+                                "Win Rate": "profitable_pct",
+                                "Risk-Adjusted Return": "risk_adj_ret"
+                            }
+                            weather3_objective_value = weather3_objective_map[weather3_objective]
 
                         # --- Diversification Constraints ---
                         st.markdown("**Diversification Constraints**")
@@ -4299,13 +4365,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             with mvo_col2:
                                 weather3_max_turnover = st.slider(
                                     "Max Turnover",
-                                    min_value=0.00,
-                                    max_value=1.00,
-                                    value=0.20,
-                                    step=0.05,
-                                    help="How much each grid's acre allocation can change. 0.00 = no changes, 1.00 = full reallocation allowed.",
+                                    min_value=0,
+                                    max_value=100,
+                                    value=20,
+                                    step=5,
+                                    format="%d%%",
+                                    help="How much each grid's acre allocation can change. 0% = no changes, 100% = full reallocation allowed.",
                                     key="ps_weather3_turnover"
-                                )
+                                ) / 100.0  # Convert back to decimal for calculations
 
                         st.markdown("---")
 
@@ -4361,7 +4428,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                 intended_use=intended_use,
                                                 coverage_level=coverage_level,
                                                 iterations=weather3_search_iterations,
-                                                interval_range_opt=weather3_interval_range
+                                                interval_range_opt=weather3_interval_range,
+                                                objective=weather3_objective_value
                                             )
 
                                         weather3_allocations[gid] = best_alloc
@@ -4411,6 +4479,9 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         budget_adjusted_total = initial_total_acres
 
                                     # === Stage 2b: MVO Rebalancing (within turnover bounds of scaled baseline) ===
+                                    # Save budget-scaled acres BEFORE MVO (for display later)
+                                    budget_scaled_acres = weather3_acres.copy()
+
                                     if weather3_optimize_acreage:
                                         st.write("**Stage 2b: MVO Rebalancing within Turnover Bounds...**")
 
@@ -4567,6 +4638,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         'allocations': weather3_allocations,
                                         'acres': weather3_acres,
                                         'initial_acres': weather_acres_gen.copy(),
+                                        'budget_scaled_acres': budget_scaled_acres,
                                         'grids': weather_grids_gen,
                                         'metrics': weather3_metrics,
                                         'df': weather3_df,
@@ -4575,6 +4647,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         'interval_stats': weather3_interval_stats,
                                         'methodology': 'mvo' if weather3_optimize_acreage else 'naive',
                                         'risk_aversion': weather3_risk_aversion,
+                                        'max_turnover': weather3_max_turnover,
                                         'budget_enabled': weather3_enable_budget,
                                         'budget_amount': weather3_annual_budget if weather3_enable_budget else None
                                     }
@@ -4669,22 +4742,32 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     else:
                                         st.warning(f"**CHAMPION HOLDS!** ROI: {winner_roi:.1%}")
 
-                                # Acre Redistribution Analysis
+                                # Acre Redistribution Analysis - Show all 3 stages
                                 st.markdown("#### Acre Redistribution (MVO Impact)")
+
+                                max_turnover_used = weather3.get('max_turnover', 0.20)
+                                st.caption(f"MVO turnover constraint: ±{max_turnover_used:.0%} relative to budget-scaled baseline")
 
                                 acre_comparison = []
                                 for gid in weather3['grids']:
                                     initial = weather3['initial_acres'].get(gid, 0)
-                                    optimized = weather3['acres'].get(gid, 0)
-                                    change = optimized - initial
-                                    change_pct = (change / initial * 100) if initial > 0 else 0
+                                    budget_scaled = weather3.get('budget_scaled_acres', weather3['initial_acres']).get(gid, initial)
+                                    mvo_optimized = weather3['acres'].get(gid, 0)
+
+                                    # Budget Scale % = change from Initial to Budget Scaled
+                                    budget_scale_pct = ((budget_scaled - initial) / initial * 100) if initial > 0 else 0
+
+                                    # MVO Turnover % = change from Budget Scaled to MVO Optimized
+                                    # This should respect the ±max_turnover bound
+                                    mvo_turnover_pct = ((mvo_optimized - budget_scaled) / budget_scaled * 100) if budget_scaled > 0 else 0
 
                                     acre_comparison.append({
                                         'Grid': gid,
                                         'Initial Acres': f"{initial:,.0f}",
-                                        'Optimized Acres': f"{optimized:,.0f}",
-                                        'Change': f"{change:+,.0f}",
-                                        'Change %': f"{change_pct:+.1f}%"
+                                        'Budget Scaled': f"{budget_scaled:,.0f}",
+                                        'MVO Optimized': f"{mvo_optimized:,.0f}",
+                                        'Budget Scale %': f"{budget_scale_pct:+.1f}%",
+                                        'MVO Turnover %': f"{mvo_turnover_pct:+.1f}%"
                                     })
 
                                 acre_df = pd.DataFrame(acre_comparison)
@@ -6344,13 +6427,14 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
         with opt_col2:
             max_turnover = st.slider(
                 "Max Turnover",
-                min_value=0.00,
-                max_value=1.00,
-                value=0.20,
-                step=0.05,
-                help="How much each grid's allocation can change. 0.00 = no changes allowed, 1.00 = full reallocation allowed.",
+                min_value=0,
+                max_value=100,
+                value=20,
+                step=5,
+                format="%d%%",
+                help="How much each grid's allocation can change. 0% = no changes allowed, 100% = full reallocation allowed.",
                 key="s4_max_turnover"
-            )
+            ) / 100.0  # Convert back to decimal for calculations
 
     st.divider()
 
