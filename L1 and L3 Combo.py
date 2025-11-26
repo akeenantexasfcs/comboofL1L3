@@ -1107,8 +1107,9 @@ def run_analog_year_optimization(
     """
     Run optimization for a single grid using ONLY the specified analog years.
 
-    This is similar to run_fast_optimization_core but filters to specific years
-    rather than a year range. Used for weather-view optimization.
+    IMPROVED: Uses interval-weighted search instead of pure random.
+    Scores intervals by average shortfall during analog years, then focuses
+    the search on high-shortfall intervals (similar to Challenger 1 approach).
 
     Args:
         session: Snowflake session
@@ -1133,9 +1134,9 @@ def run_analog_year_optimization(
     all_indices_df = load_all_indices(session, grid_id)
 
     # Filter to ONLY analog years
-    all_indices_df = all_indices_df[all_indices_df['YEAR'].isin(analog_years)]
+    analog_indices_df = all_indices_df[all_indices_df['YEAR'].isin(analog_years)]
 
-    if all_indices_df.empty:
+    if analog_indices_df.empty:
         return {}, 0.0, 0
 
     current_rate_year = get_current_rate_year(session)
@@ -1145,8 +1146,134 @@ def run_analog_year_optimization(
     dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
     total_protection = dollar_protection * acres
 
-    # Build index matrix: (n_years, 11)
-    years = sorted(all_indices_df['YEAR'].unique())
+    # === KEY IMPROVEMENT: Score intervals by analog-year shortfall ===
+    trigger = coverage_level * 100
+    interval_scores = {}
+
+    for interval in INTERVAL_ORDER_11:
+        interval_data = analog_indices_df[analog_indices_df['INTERVAL_NAME'] == interval]['INDEX_VALUE']
+        if len(interval_data) > 0:
+            # Calculate average shortfall (how much below trigger)
+            # Higher shortfall = more indemnity potential = better interval to insure
+            avg_index = interval_data.mean()
+            avg_shortfall = max(0, trigger - avg_index)
+
+            # Also consider frequency of payouts
+            payout_frequency = (interval_data < trigger).sum() / len(interval_data)
+
+            # Combined score: shortfall magnitude * frequency
+            # This favors intervals that both pay out often AND pay out big
+            interval_scores[interval] = avg_shortfall * (0.5 + payout_frequency)
+        else:
+            interval_scores[interval] = 0
+
+    # Sort intervals by score (highest shortfall first)
+    sorted_intervals = sorted(interval_scores.items(), key=lambda x: x[1], reverse=True)
+
+    # Determine search depth based on iterations
+    # More iterations = explore more intervals
+    if iterations >= 7000:
+        search_depth = 9  # Near-exhaustive
+    elif iterations >= 3000:
+        search_depth = 7  # Thorough
+    elif iterations >= 1000:
+        search_depth = 6  # Standard
+    else:
+        search_depth = 5  # Fast
+
+    top_intervals = [x[0] for x in sorted_intervals[:search_depth]]
+
+    # === Generate candidates using INTELLIGENT combinatorial search ===
+    candidates = []
+    min_intervals, max_intervals = interval_range_opt
+
+    # Phase 1: Systematic combinations of top intervals (like Challenger 1)
+    for num_intervals in range(min_intervals, min(max_intervals + 1, len(top_intervals) + 1)):
+        for combo in combinations(top_intervals, num_intervals):
+            # Skip adjacent intervals (except Nov-Dec/Jan-Feb wrap)
+            if has_adjacent_intervals_in_list(list(combo)):
+                continue
+
+            # Generate multiple allocation patterns for this combination
+            combo_allocations = generate_allocations(list(combo), num_intervals)
+            candidates.extend(combo_allocations)
+
+    # Phase 2: Add weighted random candidates that favor high-score intervals
+    # This explores beyond the strict top-N but still biased toward good intervals
+    total_score = sum(max(0.1, score) for score in interval_scores.values())
+    interval_weights = {k: max(0.1, v) / total_score for k, v in interval_scores.items()}
+
+    remaining_iterations = max(0, iterations - len(candidates))
+
+    for _ in range(remaining_iterations):
+        # Weighted random selection of intervals
+        num_intervals = random.randint(min_intervals, max_intervals)
+
+        # Select intervals with probability proportional to their score
+        available = list(INTERVAL_ORDER_11)
+        selected = []
+
+        for _ in range(num_intervals):
+            if not available:
+                break
+
+            # Calculate weights for available intervals
+            weights = [interval_weights.get(i, 0.1) for i in available]
+            total_w = sum(weights)
+            if total_w == 0:
+                break
+
+            probs = [w / total_w for w in weights]
+
+            # Weighted random choice
+            r = random.random()
+            cumsum = 0
+            chosen_idx = 0
+            for i, p in enumerate(probs):
+                cumsum += p
+                if r <= cumsum:
+                    chosen_idx = i
+                    break
+
+            chosen = available[chosen_idx]
+            selected.append(chosen)
+
+            # Remove chosen and adjacent intervals from available
+            to_remove = [chosen]
+            chosen_global_idx = INTERVAL_ORDER_11.index(chosen)
+            if chosen_global_idx > 0:
+                to_remove.append(INTERVAL_ORDER_11[chosen_global_idx - 1])
+            if chosen_global_idx < len(INTERVAL_ORDER_11) - 1:
+                to_remove.append(INTERVAL_ORDER_11[chosen_global_idx + 1])
+
+            available = [i for i in available if i not in to_remove]
+
+        if len(selected) >= 2:
+            # Generate allocation for selected intervals
+            alloc = generate_weighted_allocation(selected, interval_scores)
+            if alloc and is_valid_allocation(alloc):
+                candidates.append(alloc)
+
+    # Deduplicate candidates
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        # Handle both dict and array formats
+        if isinstance(candidate, dict):
+            key = tuple(sorted((k, round(v, 2)) for k, v in candidate.items() if v > 0))
+        else:
+            key = tuple(round(v, 2) for v in candidate)
+        if key not in seen:
+            seen.add(key)
+            unique_candidates.append(candidate)
+
+    if len(unique_candidates) == 0:
+        # Fallback to naive allocation
+        return generate_naive_weights_as_dict(), 0.0, 0
+
+    # === Vectorized ROI calculation ===
+    # Build index matrix for analog years only
+    years = sorted(analog_indices_df['YEAR'].unique())
     n_years = len(years)
 
     if n_years == 0:
@@ -1155,7 +1282,7 @@ def run_analog_year_optimization(
     index_matrix = np.zeros((n_years, INTERVAL_RANGE))
 
     for y_idx, year in enumerate(years):
-        year_data = all_indices_df[all_indices_df['YEAR'] == year]
+        year_data = analog_indices_df[analog_indices_df['YEAR'] == year]
         for interval_idx, interval_name in enumerate(INTERVAL_ORDER_11):
             row = year_data[year_data['INTERVAL_NAME'] == interval_name]
             if not row.empty:
@@ -1163,18 +1290,19 @@ def run_analog_year_optimization(
             else:
                 index_matrix[y_idx, interval_idx] = 100.0  # Default to no shortfall
 
-    # Build premium rates array: (11,)
+    # Build premium rates array
     premium_rates_array = np.array([
         premium_rates.get(interval, 0) for interval in INTERVAL_ORDER_11
     ])
 
-    # Generate candidates - global search with custom interval range
-    candidates = []
-    for _ in range(iterations):
-        candidates.append(generate_random_valid_allocation(interval_count_range=interval_range_opt))
-
-    # Convert to batch array: (n_candidates, 11)
-    weights_batch = np.array(candidates)
+    # Convert candidates to batch array (handle both dict and array formats)
+    weights_batch = np.zeros((len(unique_candidates), INTERVAL_RANGE))
+    for i, candidate in enumerate(unique_candidates):
+        if isinstance(candidate, dict):
+            for j, interval in enumerate(INTERVAL_ORDER_11):
+                weights_batch[i, j] = candidate.get(interval, 0)
+        else:
+            weights_batch[i] = candidate
 
     # Vectorized ROI calculation
     roi_scores = calculate_vectorized_roi(
@@ -1193,7 +1321,82 @@ def run_analog_year_optimization(
         if best_weights[idx] > 0.001:
             best_allocation[interval] = round(best_weights[idx], 2)
 
-    return best_allocation, float(best_roi), len(candidates)
+    return best_allocation, float(best_roi), len(unique_candidates)
+
+
+def generate_weighted_allocation(selected_intervals, interval_scores):
+    """
+    Generate an allocation for selected intervals, weighting by their scores.
+    Higher-scoring intervals get more allocation (within 10-50% bounds).
+
+    Args:
+        selected_intervals: List of interval names to allocate to
+        interval_scores: Dict of interval -> score
+
+    Returns:
+        Dict of interval -> weight (as decimal, e.g., 0.25 for 25%)
+    """
+    if len(selected_intervals) == 0:
+        return None
+
+    # Get scores for selected intervals
+    scores = [max(0.1, interval_scores.get(i, 0.1)) for i in selected_intervals]
+    total_score = sum(scores)
+
+    # Calculate raw proportional weights
+    raw_weights = [s / total_score for s in scores]
+
+    # Apply constraints: each must be 10-50%, total must be 100%
+    # Start with proportional, then clamp and redistribute
+    weights = []
+    for w in raw_weights:
+        clamped = max(0.10, min(0.50, w))
+        weights.append(clamped)
+
+    # Normalize to sum to 1.0
+    total = sum(weights)
+    if total > 0:
+        weights = [w / total for w in weights]
+
+    # Round to whole percentages
+    weights = [round(w * 100) / 100 for w in weights]
+
+    # Fix rounding errors
+    diff = 1.0 - sum(weights)
+    if abs(diff) > 0.001:
+        # Add/subtract from largest weight
+        max_idx = weights.index(max(weights))
+        weights[max_idx] += diff
+
+    # Final validation
+    for w in weights:
+        if w > 0 and (w < 0.10 or w > 0.50):
+            # Fallback to equal distribution
+            equal_weight = round(1.0 / len(selected_intervals), 2)
+            weights = [equal_weight] * len(selected_intervals)
+            diff = 1.0 - sum(weights)
+            weights[0] += diff
+            break
+
+    # Build allocation dict
+    allocation = {interval: 0.0 for interval in INTERVAL_ORDER_11}
+    for i, interval in enumerate(selected_intervals):
+        allocation[interval] = weights[i]
+
+    return allocation
+
+
+def generate_naive_weights_as_dict():
+    """
+    Generate naive equal distribution as a dictionary.
+    Fallback when no valid candidates found.
+    """
+    selected_indices = [0, 2, 4, 6, 8]  # Jan-Feb, Mar-Apr, May-Jun, Jul-Aug, Sep-Oct
+    allocation = {interval: 0.0 for interval in INTERVAL_ORDER_11}
+    pct_each = 0.20
+    for idx in selected_indices:
+        allocation[INTERVAL_ORDER_11[idx]] = pct_each
+    return allocation
 
 
 def run_weather_mvo_optimization(
