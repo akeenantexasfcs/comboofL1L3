@@ -351,9 +351,9 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
         # Apply filters
         # ENSO regime filter
         if regime != 'Any':
-            if regime == 'La Niña' and dominant_phase != 'La Nina':
+            if regime == 'La Nina' and dominant_phase != 'La Nina':
                 continue
-            elif regime == 'El Niño' and dominant_phase != 'El Nino':
+            elif regime == 'El Nino' and dominant_phase != 'El Nino':
                 continue
             elif regime == 'Neutral' and dominant_phase != 'Neutral':
                 continue
@@ -2682,15 +2682,15 @@ def create_change_analysis_table(champ_alloc, chall_alloc, champ_acres, chall_ac
 
         # Format acre change with +/- or 0
         if not in_champ and in_chall:
-            row['Acre Δ'] = f"+{ch_acres:,.0f}"
+            row['Acre Change'] = f"+{ch_acres:,.0f}"
         elif in_champ and not in_chall:
-            row['Acre Δ'] = f"-{c_acres:,.0f}"
+            row['Acre Change'] = f"-{c_acres:,.0f}"
         elif acre_change > 0:
-            row['Acre Δ'] = f"+{acre_change:,.0f}"
+            row['Acre Change'] = f"+{acre_change:,.0f}"
         elif acre_change < 0:
-            row['Acre Δ'] = f"{acre_change:,.0f}"
+            row['Acre Change'] = f"{acre_change:,.0f}"
         else:
-            row['Acre Δ'] = "0"
+            row['Acre Change'] = "0"
 
         rows.append(row)
 
@@ -2715,11 +2715,11 @@ def create_change_analysis_table(champ_alloc, chall_alloc, champ_acres, chall_ac
     totals_row['Chall Acres'] = f"{total_chall_acres:,.0f}"
 
     if total_acre_change > 0:
-        totals_row['Acre Δ'] = f"+{total_acre_change:,.0f}"
+        totals_row['Acre Change'] = f"+{total_acre_change:,.0f}"
     elif total_acre_change < 0:
-        totals_row['Acre Δ'] = f"{total_acre_change:,.0f}"
+        totals_row['Acre Change'] = f"{total_acre_change:,.0f}"
     else:
-        totals_row['Acre Δ'] = "0"
+        totals_row['Acre Change'] = "0"
 
     rows.append(totals_row)
 
@@ -2764,7 +2764,7 @@ def create_change_analysis_table(champ_alloc, chall_alloc, champ_acres, chall_ac
         return ''
 
     # Apply styling to interval columns, Net Change, and acre change column
-    style_cols = list(INTERVAL_ORDER_11) + ['Net Change', 'Acre Δ']
+    style_cols = list(INTERVAL_ORDER_11) + ['Net Change', 'Acre Change']
     styled = df.style.applymap(highlight_change_cell, subset=[c for c in style_cols if c in df.columns])
 
     return styled, df
@@ -3005,7 +3005,7 @@ def render_change_analysis_text_table(champ_alloc, chall_alloc, champ_acres, cha
 
         row['Champ'] = f"{c_acres:,.0f}"
         row['Chall'] = f"{ch_acres:,.0f}"
-        row['Δ Acres'] = f"{acre_change:+,.0f}" if acre_change != 0 else "0"
+        row['Acre Change'] = f"{acre_change:+,.0f}" if acre_change != 0 else "0"
         rows.append(row)
 
     # Totals row
@@ -3023,14 +3023,14 @@ def render_change_analysis_text_table(champ_alloc, chall_alloc, champ_acres, cha
     total_acre_change = total_chall_acres - total_champ_acres
     totals_row['Champ'] = f"{total_champ_acres:,.0f}"
     totals_row['Chall'] = f"{total_chall_acres:,.0f}"
-    totals_row['Δ Acres'] = f"{total_acre_change:+,.0f}" if total_acre_change != 0 else "0"
+    totals_row['Acre Change'] = f"{total_acre_change:+,.0f}" if total_acre_change != 0 else "0"
 
     # Render header
     header = f"{'Grid':<20}"
     for interval in INTERVAL_ORDER_11:
         short_name = interval[:7]
         header += f" {short_name:>7}"
-    header += f" {'Net':>5} {'Champ':>10} {'Chall':>10} {'Δ Acres':>10}"
+    header += f" {'Net':>5} {'Champ':>10} {'Chall':>10} {'Acre Change':>12}"
 
     st.text(header)
     st.text("─" * len(header))
@@ -3040,7 +3040,7 @@ def render_change_analysis_text_table(champ_alloc, chall_alloc, champ_acres, cha
         line = f"{row['Grid']:<20}"
         for interval in INTERVAL_ORDER_11:
             line += f" {row[interval]:>7}"
-        line += f" {row['Net']:>5} {row['Champ']:>10} {row['Chall']:>10} {row['Δ Acres']:>10}"
+        line += f" {row['Net']:>5} {row['Champ']:>10} {row['Chall']:>10} {row['Acre Change']:>12}"
         st.text(line)
 
     # Render totals row
@@ -3048,7 +3048,7 @@ def render_change_analysis_text_table(champ_alloc, chall_alloc, champ_acres, cha
     line = f"{totals_row['Grid']:<20}"
     for interval in INTERVAL_ORDER_11:
         line += f" {totals_row[interval]:>7}"
-    line += f" {totals_row['Net']:>5} {totals_row['Champ']:>10} {totals_row['Chall']:>10} {totals_row['Δ Acres']:>10}"
+    line += f" {totals_row['Net']:>5} {totals_row['Champ']:>10} {totals_row['Chall']:>10} {totals_row['Acre Change']:>12}"
     st.text(line)
 
 
@@ -3911,7 +3911,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col1:
                     enso_regime = st.selectbox(
                         "ENSO Regime",
-                        options=["La Niña", "El Niño", "Neutral", "Any"],
+                        options=["La Nina", "El Nino", "Neutral", "Any"],
                         index=0,
                         key="ps_weather_enso"
                     )
@@ -4771,8 +4771,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 "Select scenario to test:",
                                 options=[
                                     "All Years (except Current Year)",
-                                    "La Niña Years Only",
-                                    "El Niño Years Only",
+                                    "La Nina Years Only",
+                                    "El Nino Years Only",
                                     "Neutral Years Only",
                                     analog_label,
                                     "Custom Range"
@@ -4793,8 +4793,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 # Map radio selection to scenario filter
                                 scenario_map = {
                                     "All Years (except Current Year)": "All Years (except Current Year)",
-                                    "La Niña Years Only": "ENSO Phase: La Nina",
-                                    "El Niño Years Only": "ENSO Phase: El Nino",
+                                    "La Nina Years Only": "ENSO Phase: La Nina",
+                                    "El Nino Years Only": "ENSO Phase: El Nino",
                                     "Neutral Years Only": "ENSO Phase: Neutral",
                                     analog_label: "Analog Years",
                                     "Custom Range": "Custom Range"
@@ -4893,12 +4893,16 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 # Create scenario label for table
                                 scenario_short = stress['scenario'].replace(" Only", "").replace(" (Current Results)", "")
 
+                                # Get the baseline scenario from session state (what Champion was trained on)
+                                baseline_scenario = st.session_state.get('ps_scenario', 'All Years (except Current Year)')
+                                baseline_label = baseline_scenario.replace(' (except Current Year)', '').replace('ENSO Phase: ', '')
+
                                 comparison_data = {
                                     'Metric': [
-                                        'ROI (All Years)',
+                                        f'ROI ({baseline_label})',
                                         f'ROI ({scenario_short})',
-                                        'Δ vs All Years',
-                                        'Δ vs Champion'
+                                        f'Change vs {baseline_label}',
+                                        'Change vs Champion'
                                     ],
                                     'Champion': [
                                         format_roi(champ_baseline.get('cumulative_roi', 0)),
@@ -5006,11 +5010,11 @@ Your weather strategy appears robust and not overly dependent on specific condit
                                     st.info(insight_msg)
 
                                 # Add scenario-specific warnings
-                                if "El Niño" in stress['scenario'] and weather_advantage_stress < 0:
+                                if "El Nino" in stress['scenario'] and weather_advantage_stress < 0:
                                     st.warning(f"""
 ⚠️ **Hedging Alert:** Your Weather Challengers underperform Champion by
-{abs(weather_advantage_stress):.1%} if El Niño conditions materialize.
-Consider whether your conviction in the La Niña thesis justifies this downside risk.
+{abs(weather_advantage_stress):.1%} if El Nino conditions materialize.
+Consider whether your conviction in the La Nina thesis justifies this downside risk.
 """)
 
                                 # Download button for stress test
@@ -7350,15 +7354,15 @@ def main():
         - **Wet**: Z > 0.25 (~60th percentile or wetter)
 
         **Expected Trajectory (SOY 11P vs EOY 5P):**
-        - **Get Drier**: Δ < -0.05
-        - **Stay Stable**: -0.05 ≤ Δ ≤ 0.05
-        - **Get Wetter**: Δ > 0.05
+        - **Get Drier**: Change < -0.05
+        - **Stay Stable**: -0.05 <= Change <= 0.05
+        - **Get Wetter**: Change > 0.05
 
-        *Trajectory Δ = Nov-Dec 5P Z minus Jan-Feb 11P Z*
+        *Trajectory Change = Nov-Dec 5P Z minus Jan-Feb 11P Z*
 
         *11P = 11-period rolling avg (stable baseline)*
         *5P = 5-period rolling avg (recent trend)*
-        *Positive Δ = year trending wetter*
+        *Positive Change = year trending wetter*
         """)
 
     with st.sidebar.expander("🏆 Strategy Key"):
