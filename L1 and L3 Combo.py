@@ -4040,6 +4040,15 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         st.markdown("---")
 
                         # --- Generate Weather Challenger Button ---
+                        weather2_iteration_map = {'Fast': 500, 'Standard': 3000, 'Thorough': 7000, 'Maximum': 15000}
+                        weather2_depth_key = st.select_slider(
+                            "Search Depth",
+                            options=list(weather2_iteration_map.keys()),
+                            value='Standard',
+                            key="ps_weather2_depth"
+                        )
+                        weather2_iterations = weather2_iteration_map[weather2_depth_key]
+
                         if st.button("🌦️ Generate Weather Challenger 2", key="ps_generate_weather", type="primary"):
                             weather_config = st.session_state.get('ps_weather_config', {})
                             weather_grids_gen = weather_config.get('grids', [])
@@ -4057,7 +4066,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 with st.spinner(f"Optimizing {len(weather_grids_gen)} grids for {len(analog_year_list)} analog years..."):
                                     weather_challenger_allocations = {}
                                     weather_challenger_acres = {}
-                                    optimization_iterations = 2000
+                                    optimization_iterations = weather2_iterations
 
                                     progress_bar = st.progress(0)
                                     for idx, gid in enumerate(weather_grids_gen):
