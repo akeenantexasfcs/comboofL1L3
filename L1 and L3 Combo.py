@@ -1096,6 +1096,103 @@ def run_fast_optimization_core(
 
     return best_allocation, float(best_roi), len(candidates)
 
+
+def run_analog_year_optimization(
+    session, grid_id, analog_years, plan_code, productivity_factor,
+    acres, intended_use, coverage_level, iterations, interval_range_opt
+):
+    """
+    Run optimization for a single grid using ONLY the specified analog years.
+
+    This is similar to run_fast_optimization_core but filters to specific years
+    rather than a year range. Used for weather-view optimization.
+
+    Args:
+        session: Snowflake session
+        grid_id: Grid identifier
+        analog_years: List of year integers (e.g., [1954, 1971, 1988, ...])
+        plan_code: Insurance plan code
+        productivity_factor: Productivity multiplier
+        acres: Number of acres
+        intended_use: Use type (Grazing, Haying)
+        coverage_level: Coverage level (e.g., 0.80)
+        iterations: Number of iterations for optimization
+        interval_range_opt: Tuple of (min, max) active intervals
+
+    Returns:
+        Tuple of (best_allocation_dict, best_roi, strategies_tested)
+    """
+    if not analog_years or len(analog_years) == 0:
+        return {}, 0.0, 0
+
+    # Load data
+    county_base_value = load_county_base_value(session, grid_id)
+    all_indices_df = load_all_indices(session, grid_id)
+
+    # Filter to ONLY analog years
+    all_indices_df = all_indices_df[all_indices_df['YEAR'].isin(analog_years)]
+
+    if all_indices_df.empty:
+        return {}, 0.0, 0
+
+    current_rate_year = get_current_rate_year(session)
+    premium_rates = load_premium_rates(session, grid_id, intended_use, [coverage_level], current_rate_year)[coverage_level]
+    subsidy = load_subsidies(session, plan_code, [coverage_level])[coverage_level]
+
+    dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
+    total_protection = dollar_protection * acres
+
+    # Build index matrix: (n_years, 11)
+    years = sorted(all_indices_df['YEAR'].unique())
+    n_years = len(years)
+
+    if n_years == 0:
+        return {}, 0.0, 0
+
+    index_matrix = np.zeros((n_years, INTERVAL_RANGE))
+
+    for y_idx, year in enumerate(years):
+        year_data = all_indices_df[all_indices_df['YEAR'] == year]
+        for interval_idx, interval_name in enumerate(INTERVAL_ORDER_11):
+            row = year_data[year_data['INTERVAL_NAME'] == interval_name]
+            if not row.empty:
+                index_matrix[y_idx, interval_idx] = float(row['INDEX_VALUE'].iloc[0])
+            else:
+                index_matrix[y_idx, interval_idx] = 100.0  # Default to no shortfall
+
+    # Build premium rates array: (11,)
+    premium_rates_array = np.array([
+        premium_rates.get(interval, 0) for interval in INTERVAL_ORDER_11
+    ])
+
+    # Generate candidates - global search with custom interval range
+    candidates = []
+    for _ in range(iterations):
+        candidates.append(generate_random_valid_allocation(interval_count_range=interval_range_opt))
+
+    # Convert to batch array: (n_candidates, 11)
+    weights_batch = np.array(candidates)
+
+    # Vectorized ROI calculation
+    roi_scores = calculate_vectorized_roi(
+        weights_batch, index_matrix, premium_rates_array,
+        coverage_level, subsidy, total_protection
+    )
+
+    # Find best
+    best_idx = np.argmax(roi_scores)
+    best_weights = weights_batch[best_idx]
+    best_roi = roi_scores[best_idx]
+
+    # Convert weights array to dictionary
+    best_allocation = {}
+    for idx, interval in enumerate(INTERVAL_ORDER_11):
+        if best_weights[idx] > 0.001:
+            best_allocation[interval] = round(best_weights[idx], 2)
+
+    return best_allocation, float(best_roi), len(candidates)
+
+
 # =============================================================================
 # === ACRE OPTIMIZATION FUNCTIONS (Two-Stage Optimization) ===
 # =============================================================================
@@ -2280,6 +2377,60 @@ def create_performance_comparison_table(champ_metrics, chall_metrics):
     return pd.DataFrame(comparison_data)
 
 
+def create_3way_comparison_table(champ_metrics, chall1_metrics, weather_metrics):
+    """
+    Create a 3-way performance comparison table: Champion vs Challenger 1 vs Weather Challenger.
+
+    Args:
+        champ_metrics: Dict with champion performance metrics
+        chall1_metrics: Dict with challenger 1 performance metrics
+        weather_metrics: Dict with weather challenger performance metrics
+
+    Returns:
+        pandas DataFrame for display with st.table
+    """
+    # Extract metrics
+    champ_roi = champ_metrics.get('cumulative_roi', 0)
+    chall1_roi = chall1_metrics.get('cumulative_roi', 0)
+    weather_roi = weather_metrics.get('cumulative_roi', 0)
+
+    champ_risk_adj = champ_metrics.get('risk_adj_return', 0)
+    chall1_risk_adj = chall1_metrics.get('risk_adj_return', 0)
+    weather_risk_adj = weather_metrics.get('risk_adj_return', 0)
+
+    champ_premium = champ_metrics.get('avg_annual_premium', 0)
+    chall1_premium = chall1_metrics.get('avg_annual_premium', 0)
+    weather_premium = weather_metrics.get('avg_annual_premium', 0)
+
+    champ_win = champ_metrics.get('profitable_pct', 0)
+    chall1_win = chall1_metrics.get('profitable_pct', 0)
+    weather_win = weather_metrics.get('profitable_pct', 0)
+
+    comparison_data = {
+        'Metric': ['Cumulative ROI', 'Risk-Adjusted Return', 'Est. Annual Premium', 'Win Rate'],
+        'Champion': [
+            f"{champ_roi:.1%}",
+            f"{champ_risk_adj:.2f}",
+            f"${champ_premium:,.0f}",
+            f"{champ_win:.0%}"
+        ],
+        'Challenger 1': [
+            f"{chall1_roi:.1%}",
+            f"{chall1_risk_adj:.2f}",
+            f"${chall1_premium:,.0f}",
+            f"{chall1_win:.0%}"
+        ],
+        'Weather Chall 2': [
+            f"{weather_roi:.1%}",
+            f"{weather_risk_adj:.2f}",
+            f"${weather_premium:,.0f}",
+            f"{weather_win:.0%}"
+        ]
+    }
+
+    return pd.DataFrame(comparison_data)
+
+
 def render_allocation_text_table(allocations_dict, grid_list, grid_acres=None, label="AVERAGE"):
     """
     Render an allocation table as stable text output.
@@ -3404,13 +3555,136 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                         st.markdown("---")
 
-                        # Placeholder for next phase
-                        st.info("✅ Analog years identified. Next: Generate Weather Challengers (coming in next update)")
+                        # --- Generate Weather Challenger Button ---
+                        if st.button("🌦️ Generate Weather Challenger 2", key="ps_generate_weather", type="primary"):
+                            weather_config = st.session_state.get('ps_weather_config', {})
+                            weather_grids_gen = weather_config.get('grids', [])
+                            weather_acres_gen = weather_config.get('acres', {})
+                            interval_range_gen = weather_config.get('interval_range', (2, 6))
 
-                        # Generate button placeholder
-                        if st.button("🌦️ Generate Weather Challengers", key="ps_generate_weather", type="primary", disabled=True):
-                            pass
-                        st.caption("Generation not yet implemented")
+                            # Extract year list from analog years
+                            analog_year_list = [y['year'] for y in analog_years]
+
+                            if len(weather_grids_gen) == 0:
+                                st.error("No grids configured for weather portfolio.")
+                            elif len(analog_year_list) == 0:
+                                st.error("No analog years found. Please run 'Find Analog Years' first.")
+                            else:
+                                with st.spinner(f"Optimizing {len(weather_grids_gen)} grids for {len(analog_year_list)} analog years..."):
+                                    weather_challenger_allocations = {}
+                                    weather_challenger_acres = {}
+                                    optimization_iterations = 2000
+
+                                    progress_bar = st.progress(0)
+                                    for idx, gid in enumerate(weather_grids_gen):
+                                        progress_bar.progress((idx + 1) / len(weather_grids_gen))
+
+                                        grid_acres = weather_acres_gen.get(gid, total_insured_acres // len(weather_grids_gen))
+
+                                        best_alloc, best_roi, _ = run_analog_year_optimization(
+                                            session=session,
+                                            grid_id=gid,
+                                            analog_years=analog_year_list,
+                                            plan_code=plan_code,
+                                            productivity_factor=productivity_factor,
+                                            acres=grid_acres,
+                                            intended_use=intended_use,
+                                            coverage_level=coverage_level,
+                                            iterations=optimization_iterations,
+                                            interval_range_opt=interval_range_gen
+                                        )
+
+                                        weather_challenger_allocations[gid] = best_alloc
+                                        weather_challenger_acres[gid] = grid_acres
+
+                                    progress_bar.empty()
+
+                                # Backtest on ALL years for fair comparison
+                                with st.spinner("Backtesting weather challenger on all years..."):
+                                    weather_df, weather_grid_results, weather_metrics = run_portfolio_backtest(
+                                        session=session,
+                                        selected_grids=weather_grids_gen,
+                                        grid_allocations=weather_challenger_allocations,
+                                        grid_acres=weather_challenger_acres,
+                                        start_year=start_year,
+                                        end_year=end_year,
+                                        coverage_level=coverage_level,
+                                        productivity_factor=productivity_factor,
+                                        intended_use=intended_use,
+                                        plan_code=plan_code,
+                                        scenario='All Years (except Current Year)'
+                                    )
+
+                                # Store results
+                                st.session_state.weather_challenger_results = {
+                                    'allocations': weather_challenger_allocations,
+                                    'acres': weather_challenger_acres,
+                                    'grids': weather_grids_gen,
+                                    'metrics': weather_metrics,
+                                    'df': weather_df,
+                                    'analog_years_used': analog_year_list,
+                                    'methodology': 'naive'
+                                }
+
+                                st.success(f"Weather Challenger 2 generated! Optimized on {len(analog_year_list)} analog years, tested on all years.")
+
+                        # Display Weather Challenger 2 Results (if they exist)
+                        if 'weather_challenger_results' in st.session_state and st.session_state.weather_challenger_results:
+                            weather_results = st.session_state.weather_challenger_results
+
+                            st.markdown("---")
+                            st.markdown("### 🌦️ Weather Challenger 2 Results")
+
+                            # Methodology note
+                            analog_count = len(weather_results.get('analog_years_used', []))
+                            config = st.session_state.get('ps_weather_config', {})
+                            enso_text = config.get('enso_regime', 'N/A')
+                            context_text = config.get('historical_context', 'N/A')
+
+                            st.info(f"**Methodology:** Weather Challenger 2 optimizes each grid independently for the **{analog_count} analog years** matching your market view ({enso_text} + {context_text}). No cross-grid correlation is considered - this is a 'naive' approach.")
+
+                            # 3-Way Performance Comparison
+                            if ('champion_results' in st.session_state and st.session_state.champion_results and
+                                'challenger_results' in st.session_state and st.session_state.challenger_results):
+
+                                st.markdown("#### 3-Way Performance Comparison")
+                                champ_metrics = st.session_state.champion_results.get('metrics', {})
+                                chall1_metrics = st.session_state.challenger_results.get('metrics', {})
+                                weather_metrics_disp = weather_results.get('metrics', {})
+
+                                comparison_3way_df = create_3way_comparison_table(champ_metrics, chall1_metrics, weather_metrics_disp)
+                                st.table(comparison_3way_df.set_index('Metric'))
+
+                                # Winner determination
+                                champ_roi = champ_metrics.get('cumulative_roi', 0)
+                                chall1_roi = chall1_metrics.get('cumulative_roi', 0)
+                                weather_roi = weather_metrics_disp.get('cumulative_roi', 0)
+
+                                best_roi = max(champ_roi, chall1_roi, weather_roi)
+                                if weather_roi == best_roi and weather_roi > champ_roi:
+                                    st.success(f"**WEATHER CHALLENGER 2 WINS!** ROI: {weather_roi:.1%}")
+                                elif chall1_roi == best_roi and chall1_roi > champ_roi:
+                                    st.success(f"**CHALLENGER 1 WINS!** ROI: {chall1_roi:.1%}")
+                                elif champ_roi == best_roi:
+                                    st.warning(f"**CHAMPION HOLDS!** ROI: {champ_roi:.1%}")
+
+                            # Weather Challenger Allocation Table
+                            st.markdown("#### Weather Challenger 2 Allocations")
+                            weather_styled, weather_alloc_df = create_optimized_allocation_table(
+                                weather_results['allocations'],
+                                weather_results['grids'],
+                                grid_acres=weather_results['acres'],
+                                label="WEATHER AVERAGE"
+                            )
+                            st.dataframe(weather_styled, use_container_width=True, hide_index=True)
+
+                            st.download_button(
+                                label="📥 Download Weather Challenger Allocations CSV",
+                                data=weather_alloc_df.to_csv(index=False),
+                                file_name="weather_challenger_allocations.csv",
+                                mime="text/csv",
+                                key="download_weather_csv"
+                            )
 
                     elif 'ps_analog_years' in st.session_state:
                         st.warning("No analog years found matching your criteria. Try broadening your market view (e.g., set some filters to 'Any').")
