@@ -4377,7 +4377,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         corr_df,
                                         annot=True,
                                         cmap='RdYlGn_r',
-                                        fmt=".3f",
+                                        fmt=".2f",
                                         vmin=-1,
                                         vmax=1,
                                         center=0,
