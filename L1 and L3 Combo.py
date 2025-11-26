@@ -76,9 +76,9 @@ HISTORICAL_CONTEXT_MAP = {
 }
 
 TREND_MAP = {
-    'Get Drier': {'min': float('-inf'), 'max': -0.2},
-    'Stay Stable': {'min': -0.2, 'max': 0.2},
-    'Get Wetter': {'min': 0.2, 'max': float('inf')}
+    'Get Drier': {'min': float('-inf'), 'max': -0.05},
+    'Stay Stable': {'min': -0.05, 'max': 0.05},
+    'Get Wetter': {'min': 0.05, 'max': float('inf')}
 }
 
 # === KING RANCH PRESET CONFIGURATION (CORRECTED COUNTY MAPPINGS) ===
