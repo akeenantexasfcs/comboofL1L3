@@ -333,7 +333,7 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
 
         # Apply filters
         # ENSO regime filter
-        if not regime.startswith('Any'):
+        if regime != 'Any':
             if regime == 'La Niña' and dominant_phase != 'La Nina':
                 continue
             elif regime == 'El Niño' and dominant_phase != 'El Nino':
@@ -342,14 +342,14 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
                 continue
 
         # Historical context filter (based on portfolio average Z)
-        if not hist_context.startswith('Any'):
+        if hist_context != 'Any':
             context_bounds = HISTORICAL_CONTEXT_MAP.get(hist_context, None)
             if context_bounds:
                 if not (context_bounds['min'] <= portfolio_avg_z < context_bounds['max']):
                     continue
 
         # Trajectory filter
-        if not trend.startswith('Any'):
+        if trend != 'Any':
             trend_bounds = TREND_MAP.get(trend, None)
             if trend_bounds:
                 if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
@@ -1192,7 +1192,7 @@ def run_analog_year_optimization(
 def run_weather_mvo_optimization(
     session, weather_grids, weather_acres, analog_years,
     coverage_level, productivity_factor, intended_use, plan_code,
-    interval_range_opt, optimization_iterations, risk_aversion=1.0
+    interval_range_opt, optimization_iterations, risk_aversion=1.0, max_turnover=0.20
 ):
     """
     Two-stage weather-aware portfolio optimization with MVO.
@@ -1212,6 +1212,7 @@ def run_weather_mvo_optimization(
         interval_range_opt: Tuple of (min, max) intervals
         optimization_iterations: Number of iterations per grid
         risk_aversion: MVO risk aversion parameter (higher = more conservative)
+        max_turnover: Maximum relative change for each grid's allocation (0.20 = ±20%)
 
     Returns:
         Dict with keys:
@@ -1367,8 +1368,13 @@ def run_weather_mvo_optimization(
         {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}
     ]
 
-    # Bounds: allow significant reallocation (5% to 50% per grid)
-    bounds = [(0.05, 0.50) for _ in range(n)]
+    # Bounds: ±max_turnover relative to initial weights
+    bounds = []
+    for i in range(n):
+        w_base = initial_weights[i]
+        lower = max(0.0, w_base * (1 - max_turnover))
+        upper = min(1.0, w_base * (1 + max_turnover))
+        bounds.append((lower, upper))
 
     result = minimize(
         neg_utility,
@@ -1568,15 +1574,27 @@ def optimize_grid_allocation(
     selected_grids, risk_aversion=1.0, max_turnover=0.20, allow_scale_up=False
 ):
     """
-    Two-stage optimization with robust error handling:
-    Stage 1: Find maximum total acres within budget (binary search)
-    Stage 2: Optimize distribution for risk-adjusted returns (scipy SLSQP)
+    Two-stage optimization with proper turnover constraint handling:
+
+    Stage 1: Budget Scaling - Scale all grids proportionally to meet budget
+    Stage 2: MVO Rebalancing - Optimize within ±max_turnover of scaled baseline
+
+    The key insight: turnover bounds apply to the BUDGET-SCALED baseline, not original acres.
+    This ensures budget compliance while preserving the user's portfolio distribution intent.
 
     Args:
         max_turnover: Maximum relative change allowed for each grid's allocation (0.20 = ±20%)
+                      Applied AFTER budget scaling, relative to the scaled baseline.
 
-    Returns: (optimized_acres_dict, roi_correlation_df)
+    Returns: (optimized_acres_dict, roi_correlation_df, optimization_info)
     """
+    optimization_info = {
+        'initial_total_acres': 0,
+        'budget_scaled_acres': 0,
+        'budget_scale_factor': 1.0,
+        'mvo_applied': False
+    }
+
     try:
         # Build ROI correlation matrix from historical data
         pivot_df = base_data_df.pivot_table(
@@ -1595,7 +1613,7 @@ def optimize_grid_allocation(
         n_grids = len(selected_grids)
 
         if n_grids == 0:
-            return initial_acres_per_grid.copy(), pd.DataFrame()
+            return initial_acres_per_grid.copy(), pd.DataFrame(), optimization_info
 
         # Calculate cost per acre for each grid
         cost_per_acre = {}
@@ -1612,8 +1630,10 @@ def optimize_grid_allocation(
             )
             cost_per_acre[gid] = cost
 
-        # Stage 1: Binary search for max total acres within budget
+        # === STAGE 1: Budget Scaling ===
+        # Scale all grids proportionally to meet the budget constraint FIRST
         total_initial_acres = sum(initial_acres_per_grid.values())
+        optimization_info['initial_total_acres'] = total_initial_acres
 
         # Calculate cost at initial allocation
         initial_cost, _ = calculate_annual_premium_cost(
@@ -1621,27 +1641,35 @@ def optimize_grid_allocation(
             productivity_factor, intended_use, plan_code
         )
 
-        # Determine scale factor based on budget constraint
+        # Determine budget scale factor
         if initial_cost > annual_budget:
-            # Over budget - always scale DOWN (with 0.05% buffer to stay under)
-            scale_factor = (annual_budget * 0.9995) / initial_cost
+            # Over budget - scale DOWN proportionally (with 0.05% buffer)
+            budget_scale = (annual_budget * 0.9995) / initial_cost
         elif allow_scale_up and initial_cost < annual_budget:
-            # Under budget and scale-up enabled - scale UP to fill budget (with 0.05% buffer)
-            scale_factor = (annual_budget * 0.9995) / initial_cost
+            # Under budget and scale-up enabled - scale UP to fill budget
+            budget_scale = (annual_budget * 0.9995) / initial_cost
         else:
             # Within budget and scale-up disabled - keep as is
-            scale_factor = 1.0
+            budget_scale = 1.0
 
-        max_total_acres = total_initial_acres * scale_factor
+        optimization_info['budget_scale_factor'] = budget_scale
 
-        # Stage 2: Optimize distribution using mean-variance
-        # Objective: Maximize risk-adjusted return = (expected_return - risk_aversion * variance)
+        # Calculate budget-adjusted baseline (proportional scaling)
+        budget_adjusted_baseline = {
+            gid: acres * budget_scale
+            for gid, acres in initial_acres_per_grid.items()
+        }
+        budget_adjusted_total = total_initial_acres * budget_scale
+        optimization_info['budget_scaled_acres'] = budget_adjusted_total
+
+        # === STAGE 2: MVO Rebalancing ===
+        # MVO optimizes weights, but bounds are relative to BUDGET-ADJUSTED baseline
 
         # Convert grid indices to ordered list
         grid_list = [gid for gid in selected_grids if gid in grid_results and gid in mean_rois.index]
 
         if len(grid_list) == 0:
-            return initial_acres_per_grid.copy(), roi_correlation
+            return budget_adjusted_baseline, roi_correlation, optimization_info
 
         # Get mean ROIs and covariance submatrix for our grids
         means = np.array([mean_rois.get(gid, 0) for gid in grid_list])
@@ -1657,12 +1685,11 @@ def optimize_grid_allocation(
         # Cost per acre array
         costs = np.array([cost_per_acre.get(gid, 1) for gid in grid_list])
 
-        # Initial guess: proportional allocation
-        initial_weights = np.array([initial_acres_per_grid.get(gid, 0) for gid in grid_list])
-        if initial_weights.sum() > 0:
-            initial_weights = initial_weights / initial_weights.sum()
-        else:
-            initial_weights = np.ones(n) / n
+        # Initial weights from BUDGET-ADJUSTED baseline (not original!)
+        initial_weights = np.array([
+            budget_adjusted_baseline.get(gid, 0) / budget_adjusted_total
+            for gid in grid_list
+        ]) if budget_adjusted_total > 0 else np.ones(n) / n
 
         def neg_utility(weights):
             """Negative utility function (we minimize, so negate for maximization)"""
@@ -1673,7 +1700,7 @@ def optimize_grid_allocation(
 
         def budget_constraint(weights):
             """Budget constraint: total cost <= budget"""
-            acres = weights * max_total_acres
+            acres = weights * budget_adjusted_total
             total_cost = np.dot(acres, costs)
             return annual_budget - total_cost
 
@@ -1683,12 +1710,12 @@ def optimize_grid_allocation(
             {'type': 'ineq', 'fun': budget_constraint}  # Budget constraint
         ]
 
-        # Bounds: constrain each weight to ±max_turnover relative change from initial
+        # Bounds: ±max_turnover relative to BUDGET-ADJUSTED weights
         bounds = []
         for i in range(n):
-            w_init = initial_weights[i]
-            lower = max(0.0, w_init * (1 - max_turnover))
-            upper = min(1.0, w_init * (1 + max_turnover))
+            w_base = initial_weights[i]
+            lower = max(0.0, w_base * (1 - max_turnover))
+            upper = min(1.0, w_base * (1 + max_turnover))
             bounds.append((lower, upper))
 
         # Optimize
@@ -1703,45 +1730,31 @@ def optimize_grid_allocation(
 
         if result.success:
             optimal_weights = result.x
+            optimization_info['mvo_applied'] = True
         else:
-            # Fallback to initial proportional allocation
+            # Fallback to budget-adjusted proportional allocation
             optimal_weights = initial_weights
 
-        # Convert weights to acres
+        # Convert weights to acres using budget_adjusted_total
         optimized_acres = {}
         for i, gid in enumerate(grid_list):
-            optimized_acres[gid] = optimal_weights[i] * max_total_acres
+            optimized_acres[gid] = optimal_weights[i] * budget_adjusted_total
 
-        # Add any grids that weren't in the optimization with 0 acres
+        # Add any grids that weren't in the optimization with their budget-scaled value
         for gid in selected_grids:
             if gid not in optimized_acres:
-                optimized_acres[gid] = 0
+                optimized_acres[gid] = budget_adjusted_baseline.get(gid, 0)
 
-        # === POST-OPTIMIZATION BUDGET FILL ===
-        # After MVO finds optimal distribution, scale up to fill budget if allowed
-        if allow_scale_up and annual_budget > 0:
-            # Calculate actual cost with current optimized distribution
-            final_cost, _ = calculate_annual_premium_cost(
-                session, selected_grids, optimized_acres, grid_results,
-                productivity_factor, intended_use, plan_code
-            )
-
-            # Scale up to use 99.95% of budget (preserves MVO distribution)
-            target_utilization = annual_budget * 0.9995
-            if final_cost > 0 and final_cost < target_utilization:
-                fill_factor = target_utilization / final_cost
-                optimized_acres = {gid: acres * fill_factor for gid, acres in optimized_acres.items()}
-
-        return optimized_acres, roi_correlation
+        return optimized_acres, roi_correlation, optimization_info
 
     except Exception as e:
         # Return initial allocation on error
-        return initial_acres_per_grid.copy(), pd.DataFrame()
+        return initial_acres_per_grid.copy(), pd.DataFrame(), optimization_info
 
 
 def optimize_without_budget(
     base_data_df, grid_results, max_total_acres,
-    selected_grids, risk_aversion=1.0, max_turnover=0.20
+    selected_grids, risk_aversion=1.0, max_turnover=0.20, initial_acres_per_grid=None
 ):
     """
     Optimize acre distribution for pure risk-adjusted return without budget constraint.
@@ -1749,6 +1762,9 @@ def optimize_without_budget(
 
     Args:
         max_turnover: Maximum relative change allowed for each grid's allocation (0.20 = ±20%)
+        initial_acres_per_grid: Optional baseline allocation for turnover bounds. If provided,
+                                turnover bounds are relative to this allocation's weights.
+                                If None, uses equal weights as baseline.
 
     Returns: optimized_acres_dict
     """
@@ -1778,8 +1794,18 @@ def optimize_without_budget(
                 if gi in cov_matrix.index and gj in cov_matrix.columns:
                     cov[i, j] = cov_matrix.loc[gi, gj]
 
-        # Initial guess: equal distribution as starting point
-        initial_weights = np.ones(n) / n
+        # Initial weights: use provided baseline if available, else equal distribution
+        if initial_acres_per_grid is not None:
+            total_baseline = sum(initial_acres_per_grid.get(gid, 0) for gid in grid_list)
+            if total_baseline > 0:
+                initial_weights = np.array([
+                    initial_acres_per_grid.get(gid, 0) / total_baseline
+                    for gid in grid_list
+                ])
+            else:
+                initial_weights = np.ones(n) / n
+        else:
+            initial_weights = np.ones(n) / n
 
         def neg_utility(weights):
             portfolio_return = np.dot(weights, means)
@@ -1791,12 +1817,12 @@ def optimize_without_budget(
             {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}
         ]
 
-        # Bounds: constrain each weight to ±max_turnover relative change from initial
+        # Bounds: constrain each weight to ±max_turnover relative change from baseline
         bounds = []
         for i in range(n):
-            w_init = initial_weights[i]
-            lower = max(0.0, w_init * (1 - max_turnover))
-            upper = min(1.0, w_init * (1 + max_turnover))
+            w_base = initial_weights[i]
+            lower = max(0.0, w_base * (1 - max_turnover))
+            upper = min(1.0, w_base * (1 + max_turnover))
             bounds.append((lower, upper))
 
         result = minimize(
@@ -3425,18 +3451,26 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                     base_data_df = pd.DataFrame(base_data_rows)
 
                     if enable_budget:
-                        # MVO with budget constraint
-                        challenger_acres, roi_corr = optimize_grid_allocation(
+                        # MVO with budget constraint (two-stage: budget scaling then MVO rebalancing)
+                        challenger_acres, roi_corr, opt_info = optimize_grid_allocation(
                             base_data_df, grid_results_for_mvo, initial_challenger_acres,
                             annual_budget, session, productivity_factor, intended_use, plan_code,
                             challenger_grids, risk_aversion, max_turnover, allow_scale_up
                         )
+
+                        # Display two-stage optimization feedback
+                        scale_factor = opt_info.get('budget_scale_factor', 1.0)
+                        initial_total = opt_info.get('initial_total_acres', 0)
+                        scaled_total = opt_info.get('budget_scaled_acres', 0)
+                        if scale_factor != 1.0:
+                            st.info(f"**Stage 1 - Budget scaling:** {initial_total:,.0f} → {scaled_total:,.0f} acres ({scale_factor:.1%} of original)")
+                        st.info(f"**Stage 2 - MVO rebalancing:** Grid weights adjusted within ±{max_turnover:.0%} turnover bounds")
                     else:
                         # MVO without budget - use optimize_without_budget
                         total_acres = sum(initial_challenger_acres.values())
                         challenger_acres = optimize_without_budget(
                             base_data_df, grid_results_for_mvo, total_acres,
-                            challenger_grids, risk_aversion, max_turnover
+                            challenger_grids, risk_aversion, max_turnover, initial_challenger_acres
                         )
 
                     st.success("Acreage optimization complete!")
@@ -3653,7 +3687,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col1:
                     enso_regime = st.selectbox(
                         "ENSO Regime",
-                        options=["La Niña", "El Niño", "Neutral", "Any (I am not sure)"],
+                        options=["La Niña", "El Niño", "Neutral", "Any"],
                         index=0,
                         key="ps_weather_enso"
                     )
@@ -3661,7 +3695,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col2:
                     historical_context = st.selectbox(
                         "Historical Context",
-                        options=["Dry", "Normal", "Wet", "Any (I am not sure)"],
+                        options=["Dry", "Normal", "Wet", "Any"],
                         index=0,
                         key="ps_weather_hist_context"
                     )
@@ -3669,7 +3703,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col3:
                     trajectory = st.selectbox(
                         "Expected Trajectory",
-                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any (I am not sure)"],
+                        options=["Get Wetter", "Stay Stable", "Get Drier", "Any"],
                         index=0,
                         key="ps_weather_trajectory"
                     )
@@ -4078,12 +4112,49 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     progress_bar.empty()
                                     st.success(f"Stage 1 complete! Tested {sum(s['tested'] for s in weather3_interval_stats.values()):,} strategies.")
 
-                                    # === STAGE 2: Acre Optimization ===
+                                    # === STAGE 2: Two-Stage Acre Optimization ===
+                                    # Stage 2a: Budget Scaling (if enabled) - scale all grids proportionally
+                                    # Stage 2b: MVO Rebalancing - optimize within turnover bounds of scaled baseline
+
                                     weather3_acres = weather_acres_gen.copy()
                                     analog_roi_correlation = pd.DataFrame()
+                                    initial_total_acres = sum(weather_acres_gen.values())
+                                    budget_scale_factor = 1.0
 
+                                    # === Stage 2a: Budget Scaling FIRST ===
+                                    if weather3_enable_budget:
+                                        st.write("**Stage 2a: Applying Budget Constraint...**")
+
+                                        grid_results_for_cost = {
+                                            gid: {'best_strategy': {'allocation': weather3_allocations[gid], 'coverage_level': coverage_level}}
+                                            for gid in weather_grids_gen
+                                        }
+
+                                        initial_cost, _ = calculate_annual_premium_cost(
+                                            session, weather_grids_gen, weather_acres_gen, grid_results_for_cost,
+                                            productivity_factor, intended_use, plan_code
+                                        )
+
+                                        if initial_cost > weather3_annual_budget:
+                                            budget_scale_factor = (weather3_annual_budget * 0.9995) / initial_cost
+                                        elif weather3_allow_scale_up and initial_cost < weather3_annual_budget:
+                                            budget_scale_factor = (weather3_annual_budget * 0.9995) / initial_cost
+
+                                        # Apply proportional scaling to get budget-adjusted baseline
+                                        weather3_acres = {
+                                            gid: acres * budget_scale_factor
+                                            for gid, acres in weather_acres_gen.items()
+                                        }
+                                        budget_adjusted_total = initial_total_acres * budget_scale_factor
+
+                                        if budget_scale_factor != 1.0:
+                                            st.info(f"**Budget scaling:** {initial_total_acres:,.0f} → {budget_adjusted_total:,.0f} acres ({budget_scale_factor:.1%} of original)")
+                                    else:
+                                        budget_adjusted_total = initial_total_acres
+
+                                    # === Stage 2b: MVO Rebalancing (within turnover bounds of scaled baseline) ===
                                     if weather3_optimize_acreage:
-                                        st.write("**Stage 2: Optimizing Acreage Distribution (MVO)...**")
+                                        st.write("**Stage 2b: MVO Rebalancing within Turnover Bounds...**")
 
                                         # Build ROI series for each grid during ANALOG YEARS ONLY
                                         analog_roi_data = []
@@ -4163,10 +4234,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         if gi in cov_matrix.index and gj in cov_matrix.columns:
                                                             cov[i, j] = cov_matrix.loc[gi, gj]
 
-                                                total_acres = sum(weather_acres_gen.get(gid, 0) for gid in grid_list)
-                                                if total_acres == 0:
-                                                    total_acres = len(grid_list) * 1000
-                                                initial_weights = np.array([weather_acres_gen.get(gid, 0) / total_acres for gid in grid_list])
+                                                # Use BUDGET-SCALED baseline for initial weights
+                                                if budget_adjusted_total > 0:
+                                                    initial_weights = np.array([
+                                                        weather3_acres.get(gid, 0) / budget_adjusted_total
+                                                        for gid in grid_list
+                                                    ])
+                                                else:
+                                                    initial_weights = np.ones(n) / n
 
                                                 def neg_utility(weights):
                                                     portfolio_return = np.dot(weights, means)
@@ -4178,15 +4253,15 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                     {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}
                                                 ]
 
-                                                # Bounds based on max_turnover
+                                                # Bounds: ±max_turnover RELATIVE to budget-scaled baseline weights
                                                 bounds = []
                                                 for i in range(n):
-                                                    w_init = initial_weights[i]
+                                                    w_base = initial_weights[i]
                                                     if weather3_max_turnover >= 1.0:
                                                         lower, upper = 0.0, 1.0
                                                     else:
-                                                        lower = max(0.0, w_init - weather3_max_turnover)
-                                                        upper = min(1.0, w_init + weather3_max_turnover)
+                                                        lower = max(0.0, w_base * (1 - weather3_max_turnover))
+                                                        upper = min(1.0, w_base * (1 + weather3_max_turnover))
                                                     bounds.append((lower, upper))
 
                                                 result = minimize(
@@ -4203,35 +4278,15 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                 else:
                                                     optimal_weights = initial_weights
 
+                                                # Convert weights to acres using budget_adjusted_total
                                                 for i, gid in enumerate(grid_list):
-                                                    weather3_acres[gid] = optimal_weights[i] * total_acres
+                                                    weather3_acres[gid] = optimal_weights[i] * budget_adjusted_total
 
                                                 for gid in weather_grids_gen:
                                                     if gid not in weather3_acres:
-                                                        weather3_acres[gid] = weather_acres_gen.get(gid, 0)
+                                                        weather3_acres[gid] = weather_acres_gen.get(gid, 0) * budget_scale_factor
 
-                                    # === Apply Budget Constraint ===
-                                    if weather3_enable_budget:
-                                        st.write("**Applying Budget Constraint...**")
-
-                                        grid_results_for_cost = {
-                                            gid: {'best_strategy': {'allocation': weather3_allocations[gid], 'coverage_level': coverage_level}}
-                                            for gid in weather_grids_gen
-                                        }
-
-                                        total_cost, _ = calculate_annual_premium_cost(
-                                            session, weather_grids_gen, weather3_acres, grid_results_for_cost,
-                                            productivity_factor, intended_use, plan_code
-                                        )
-
-                                        weather3_acres, scale_factor = apply_budget_constraint(
-                                            weather3_acres, total_cost, weather3_annual_budget, allow_scale_up=weather3_allow_scale_up
-                                        )
-
-                                        if scale_factor < 1.0:
-                                            st.info(f"Acres scaled DOWN by {scale_factor:.1%} to fit budget")
-                                        elif scale_factor > 1.0:
-                                            st.success(f"Acres scaled UP by {scale_factor:.1%} to fill budget")
+                                        st.info(f"**MVO rebalancing:** Grid weights adjusted within ±{weather3_max_turnover:.0%} turnover bounds")
 
                                     # === STAGE 3: Final Backtest ===
                                     st.write("**Stage 3: Running Final Backtest...**")
@@ -4377,7 +4432,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         corr_df,
                                         annot=True,
                                         cmap='RdYlGn_r',
-                                        fmt=".2f",
+                                        fmt=".3f",
                                         vmin=-1,
                                         vmax=1,
                                         center=0,
@@ -5570,8 +5625,8 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                             initial_acres[gid] = total_insured_acres / len(selected_grids)
 
                     if enable_budget and budget_method == "Optimized Distribution":
-                        # Use mean-variance optimizer
-                        optimized_grid_acres, roi_correlation_matrix = optimize_grid_allocation(
+                        # Use mean-variance optimizer (two-stage: budget scaling then MVO rebalancing)
+                        optimized_grid_acres, roi_correlation_matrix, opt_info = optimize_grid_allocation(
                             base_data_df=base_data_df,
                             grid_results=grid_results,
                             initial_acres_per_grid=initial_acres,
@@ -5585,7 +5640,13 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                             max_turnover=max_turnover,
                             allow_scale_up=False
                         )
-                        stage2_info = "Acre distribution optimized for maximum risk-adjusted returns within budget"
+                        scale_factor = opt_info.get('budget_scale_factor', 1.0)
+                        initial_total = opt_info.get('initial_total_acres', 0)
+                        scaled_total = opt_info.get('budget_scaled_acres', 0)
+                        if scale_factor != 1.0:
+                            stage2_info = f"Budget scaled {initial_total:,.0f} → {scaled_total:,.0f} acres, then MVO rebalanced within ±{max_turnover:.0%}"
+                        else:
+                            stage2_info = f"Acre distribution optimized within ±{max_turnover:.0%} turnover bounds"
 
                     elif enable_budget and budget_method == "Equal Scaling":
                         # Calculate cost with initial acres, then scale
@@ -5612,9 +5673,10 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                             max_total_acres=max_acres,
                             selected_grids=selected_grids,
                             risk_aversion=risk_aversion,
-                            max_turnover=max_turnover
+                            max_turnover=max_turnover,
+                            initial_acres_per_grid=initial_acres
                         )
-                        stage2_info = "Acre distribution optimized for maximum risk-adjusted returns"
+                        stage2_info = f"Acre distribution optimized within ±{max_turnover:.0%} turnover bounds"
 
             # Update grid_results with optimized acres
             for gid in selected_grids:
@@ -6432,6 +6494,32 @@ def main():
 
         **Challenger 3 (MVO)**
         Weather-optimized portfolio - considers cross-grid correlations during analog years, redistributes acres via Mean-Variance Optimization
+        """)
+
+    with st.sidebar.expander("⚙️ Budget & Turnover Logic"):
+        st.markdown("""
+        **Two-Stage Optimization Process:**
+
+        When both Budget and Max Turnover are set, the optimizer works in two stages:
+
+        **Stage 1: Budget Scaling**
+        - All grids scale proportionally to meet the premium budget
+        - Example: If budget requires 50% reduction, every grid drops 50%
+        - This preserves your original portfolio distribution
+
+        **Stage 2: MVO Rebalancing**
+        - Mean-Variance Optimization adjusts the distribution
+        - Max Turnover constrains how much MVO can shift each grid
+        - Turnover bounds apply to the *scaled* baseline, not original acres
+
+        **Example with 20% Turnover:**
+        ```
+        Original:     Grid A = 80,000 acres
+        After Budget: Grid A = 40,000 acres (50% scale)
+        MVO Range:    32,000 - 48,000 (±20% of scaled)
+        ```
+
+        *This ensures budget compliance while preserving portfolio intent.*
         """)
 
     st.sidebar.divider()
