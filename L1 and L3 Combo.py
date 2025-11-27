@@ -410,12 +410,18 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
         # Count ENSO intervals across all grids for this year
         la_nina_count = 0
         el_nino_count = 0
+        grids_counted = 0
         for gid, df in all_grid_data.items():
             year_df = df[df['YEAR'] == year]
             if not year_df.empty:
                 phases = year_df['OPTICAL_MAPPING_CPC'].dropna()
                 la_nina_count += (phases == 'La Nina').sum()
                 el_nino_count += (phases == 'El Nino').sum()
+                grids_counted += 1
+
+        # Calculate average per grid (more intuitive than total)
+        avg_la_nina = la_nina_count / grids_counted if grids_counted > 0 else 0
+        avg_el_nino = el_nino_count / grids_counted if grids_counted > 0 else 0
 
         # Year matches all criteria
         matching_years.append({
@@ -425,8 +431,8 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
             'portfolio_avg_z': portfolio_avg_z,
             'portfolio_trajectory': portfolio_trajectory,
             'grids_with_data': len(year_grid_data),
-            'la_nina_intervals': la_nina_count,
-            'el_nino_intervals': el_nino_count
+            'la_nina_intervals': avg_la_nina,  # Now average per grid
+            'el_nino_intervals': avg_el_nino   # Now average per grid
         })
 
     return matching_years
@@ -4431,8 +4437,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 'portfolio_avg_z': 'Portfolio Avg Z',
                                 'portfolio_trajectory': 'Avg Trajectory',
                                 'grids_with_data': 'Grids w/ Data',
-                                'la_nina_intervals': 'La Nina Intervals',
-                                'el_nino_intervals': 'El Nino Intervals'
+                                'la_nina_intervals': 'Avg La Nina Int/Grid',
+                                'el_nino_intervals': 'Avg El Nino Int/Grid'
                             })
 
                             # Get current ENSO filter to determine which columns to display
@@ -4441,10 +4447,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             # Select columns to display based on filter
                             base_columns = ['Year', 'Dominant ENSO Phase', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
 
-                            if current_enso_filter == 'Some La Nina' and 'La Nina Intervals' in analog_df.columns:
-                                display_columns = ['Year', 'Dominant ENSO Phase', 'La Nina Intervals', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
-                            elif current_enso_filter == 'Some El Nino' and 'El Nino Intervals' in analog_df.columns:
-                                display_columns = ['Year', 'Dominant ENSO Phase', 'El Nino Intervals', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
+                            if current_enso_filter == 'Some La Nina' and 'Avg La Nina Int/Grid' in analog_df.columns:
+                                display_columns = ['Year', 'Dominant ENSO Phase', 'Avg La Nina Int/Grid', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
+                            elif current_enso_filter == 'Some El Nino' and 'Avg El Nino Int/Grid' in analog_df.columns:
+                                display_columns = ['Year', 'Dominant ENSO Phase', 'Avg El Nino Int/Grid', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
                             else:
                                 display_columns = base_columns
 
@@ -4459,10 +4465,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                 'Avg Trajectory': '{:.3f}',
                                 'Grids w/ Data': '{:.0f}'
                             }
-                            if 'La Nina Intervals' in analog_df_display.columns:
-                                format_dict['La Nina Intervals'] = '{:.0f}'
-                            if 'El Nino Intervals' in analog_df_display.columns:
-                                format_dict['El Nino Intervals'] = '{:.0f}'
+                            if 'Avg La Nina Int/Grid' in analog_df_display.columns:
+                                format_dict['Avg La Nina Int/Grid'] = '{:.1f}'
+                            if 'Avg El Nino Int/Grid' in analog_df_display.columns:
+                                format_dict['Avg El Nino Int/Grid'] = '{:.1f}'
 
                             st.dataframe(
                                 analog_df_display.style.format(format_dict),
