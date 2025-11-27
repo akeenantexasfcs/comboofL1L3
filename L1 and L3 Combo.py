@@ -1723,15 +1723,18 @@ def run_portfolio_optimization_wrapper(base_data_df, naive_allocation, optimizat
 
 # === GRID ALLOCATION OPTIMIZER (MEAN-VARIANCE) ===
 def optimize_grid_allocation(base_data_df, interval_weights, initial_acres_per_grid,
-                            annual_budget, session, common_params, selected_grids, risk_aversion=1.0):
+                            annual_budget, session, common_params, selected_grids, risk_aversion=1.0,
+                            auto_fill_budget=False):
     """
-    Two-stage optimization with robust error handling:
+    Three-stage optimization with robust error handling:
     Stage 1: Find the maximum total acres that fit within budget
     Stage 2: Optimize distribution of those acres for best risk-adjusted returns
+    Stage 3: (If auto_fill_budget) Scale up all acres proportionally to hit 99.95% of budget
 
     Args:
         initial_acres_per_grid: Dict of {grid_id: acres} - STARTING point, not hard cap
         annual_budget: Maximum annual premium cost
+        auto_fill_budget: If True, scale up after MVO to ensure full budget utilization
 
     Returns:
         (optimized_acres_dict, roi_df) or raises ValueError on failure
@@ -1903,6 +1906,68 @@ def optimize_grid_allocation(base_data_df, interval_weights, initial_acres_per_g
     except Exception as e:
         # Stage 2 failed, use Stage 1 result
         pass
+
+    # STAGE 3: Post-MVO Budget Scale-Up (when auto-fill enabled)
+    # If final cost is under budget, proportionally scale up all acres to hit 99.95%
+    if auto_fill_budget:
+        final_cost = calculate_cost_for_allocation(optimal_acres)
+        target_utilization = 0.9995  # Target 99.95% budget utilization
+        min_acceptable = 0.9990     # Consider "close enough" at 99.90%
+
+        if final_cost < annual_budget * target_utilization and final_cost > 0:
+            # Calculate initial scale factor to hit target budget
+            target_budget = annual_budget * target_utilization
+            scale_factor = target_budget / final_cost
+
+            # Apply scaling while respecting per-grid upper bounds
+            scaled_acres = optimal_acres * scale_factor
+            scaled_acres = np.minimum(scaled_acres, max_acres_array)
+
+            # If any grids hit max, redistribute remaining budget to others iteratively
+            for iteration in range(10):  # Max iterations for convergence
+                new_cost = calculate_cost_for_allocation(scaled_acres)
+
+                # Check if we've reached acceptable budget utilization
+                if new_cost >= annual_budget * min_acceptable:
+                    break
+
+                # Check if we're over budget (shouldn't happen, but safety check)
+                if new_cost > annual_budget:
+                    # Scale back slightly
+                    scale_back = annual_budget * target_utilization / new_cost
+                    scaled_acres = scaled_acres * scale_back
+                    break
+
+                # Find grids that can still absorb more acres (not at max)
+                can_scale_mask = scaled_acres < max_acres_array * 0.99
+                if not np.any(can_scale_mask):
+                    # All grids at max, can't allocate more
+                    break
+
+                # Calculate how much more budget we need to fill
+                remaining_budget = target_budget - new_cost
+                if remaining_budget <= 0:
+                    break
+
+                # Get indices of grids that can scale up
+                scalable_indices = np.where(can_scale_mask)[0]
+                if len(scalable_indices) == 0:
+                    break
+
+                # Scale up non-maxed grids proportionally by their current allocation
+                scalable_total = scaled_acres[can_scale_mask].sum()
+                if scalable_total > 0:
+                    # Conservative step: try to fill remaining budget proportionally
+                    additional_scale = 1 + (remaining_budget / new_cost) * 0.5
+                    for idx in scalable_indices:
+                        scaled_acres[idx] = min(scaled_acres[idx] * additional_scale, max_acres_array[idx])
+
+            # Validate scaled result and use it if valid
+            if not (np.any(np.isnan(scaled_acres)) or np.any(np.isinf(scaled_acres)) or np.any(scaled_acres < 0)):
+                scaled_cost = calculate_cost_for_allocation(scaled_acres)
+                # Only use scaled result if it's within budget and better than before
+                if scaled_cost <= annual_budget and scaled_cost > final_cost:
+                    optimal_acres = scaled_acres
 
     # Final validation before returning
     if np.any(np.isnan(optimal_acres)) or np.any(np.isinf(optimal_acres)) or np.any(optimal_acres < 0):
@@ -3368,7 +3433,8 @@ def render_portfolio_tab(session, all_grid_ids, common_params):
                                         session=session,
                                         common_params=common_params,
                                         selected_grids=selected_grids,
-                                        risk_aversion=1.0
+                                        risk_aversion=1.0,
+                                        auto_fill_budget=True  # Enable Stage 3: scale up to use full budget
                                     )
 
                                     # Validate optimization results
