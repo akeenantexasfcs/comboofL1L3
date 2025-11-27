@@ -1567,7 +1567,8 @@ def run_weather_mvo_optimization(
 
                     trigger = coverage_level * 100
                     shortfall = max(0, (trigger - index_value) / trigger)
-                    indemnity = round_half_up(shortfall * interval_protection, 0) if shortfall > 0 else 0
+                    raw_indemnity = shortfall * interval_protection
+                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
@@ -1731,7 +1732,8 @@ def calculate_yearly_roi_for_grid(
 
             trigger = coverage_level * 100
             shortfall_pct = max(0, (trigger - index_value) / trigger)
-            indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+            raw_indemnity = shortfall_pct * interval_protection
+            indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
             total_indemnity += indemnity
             total_producer_premium += producer_premium
@@ -2660,7 +2662,8 @@ def run_portfolio_backtest(
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
-                    indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+                    raw_indemnity = shortfall_pct * interval_protection
+                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
@@ -2795,7 +2798,8 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
-                    indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+                    raw_indemnity = shortfall_pct * interval_protection
+                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
@@ -4025,7 +4029,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                                     trigger = coverage_level * 100
                                     shortfall = max(0, (trigger - index_value) / trigger)
-                                    indemnity = round_half_up(shortfall * interval_protection, 0) if shortfall > 0 else 0
+                                    raw_indemnity = shortfall * interval_protection
+                                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                                     year_indemnity += indemnity
                                     year_premium += producer_prem
@@ -4827,7 +4832,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                                                         trigger = coverage_level * 100
                                                         shortfall = max(0, (trigger - index_value) / trigger)
-                                                        indemnity = round_half_up(shortfall * interval_protection, 0) if shortfall > 0 else 0
+                                                        raw_indemnity = shortfall * interval_protection
+                                                        indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                                                         year_indemnity += indemnity
                                                         year_premium += producer_premium
@@ -5556,7 +5562,8 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
 
                                 trigger = coverage_level * 100
                                 shortfall_pct = max(0, (trigger - index_value) / trigger)
-                                indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+                                raw_indemnity = shortfall_pct * interval_protection
+                                indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                                 total_indemnity += indemnity
                                 total_producer_premium += producer_premium
@@ -5636,7 +5643,8 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
 
                             trigger = coverage_level * 100
                             shortfall_pct = max(0, (trigger - index_value) / trigger)
-                            indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+                            raw_indemnity = shortfall_pct * interval_protection
+                            indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                             total_indemnity += indemnity
                             total_producer_premium += producer_premium
@@ -6514,7 +6522,8 @@ def run_optimization_s4(
 
                 trigger = coverage_level * 100
                 shortfall_pct = max(0, (trigger - index_value) / trigger)
-                indemnity = round_half_up(shortfall_pct * interval_protection, 0) if shortfall_pct > 0 else 0
+                raw_indemnity = shortfall_pct * interval_protection
+                indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
 
                 total_indemnity += indemnity
                 total_producer_premium += producer_premium
@@ -6528,10 +6537,10 @@ def run_optimization_s4(
 
             total_indemnity_all_years += total_indemnity
             total_producer_premium_all_years += total_producer_premium
-            
+
         if len(year_rois) == 0: return None
         year_rois_array = np.array(year_rois)
-        
+
         average_roi = year_rois_array.mean()
         cumulative_roi = (total_indemnity_all_years - total_producer_premium_all_years) / total_producer_premium_all_years if total_producer_premium_all_years > 0 else 0
         std_dev = year_rois_array.std()
