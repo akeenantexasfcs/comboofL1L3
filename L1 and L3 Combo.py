@@ -1572,6 +1572,10 @@ def run_weather_mvo_optimization(
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
+                # Round accumulated values to eliminate floating-point errors
+                year_indemnity = round_half_up(year_indemnity, 0)
+                year_premium = round_half_up(year_premium, 0)
+
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
 
@@ -1731,6 +1735,10 @@ def calculate_yearly_roi_for_grid(
 
             total_indemnity += indemnity
             total_producer_premium += producer_premium
+
+        # Round accumulated values to eliminate floating-point errors
+        total_indemnity = round_half_up(total_indemnity, 0)
+        total_producer_premium = round_half_up(total_producer_premium, 0)
 
         roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
 
@@ -2657,6 +2665,10 @@ def run_portfolio_backtest(
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
+                # Round accumulated values to eliminate floating-point errors
+                year_indemnity = round_half_up(year_indemnity, 0)
+                year_premium = round_half_up(year_premium, 0)
+
                 year_results.append({
                     'year': year,
                     'indemnity': year_indemnity,
@@ -2787,6 +2799,10 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
+
+                # Round accumulated values to eliminate floating-point errors
+                year_indemnity = round_half_up(year_indemnity, 0)
+                year_premium = round_half_up(year_premium, 0)
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -4014,6 +4030,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     year_indemnity += indemnity
                                     year_premium += producer_prem
 
+                                # Round accumulated values to eliminate floating-point errors
+                                year_indemnity = round_half_up(year_indemnity, 0)
+                                year_premium = round_half_up(year_premium, 0)
+
                                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 base_data_rows.append({'year': year, 'grid': gid, 'roi': roi})
 
@@ -4812,6 +4832,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         year_indemnity += indemnity
                                                         year_premium += producer_premium
 
+                                                    # Round accumulated values to eliminate floating-point errors
+                                                    year_indemnity = round_half_up(year_indemnity, 0)
+                                                    year_premium = round_half_up(year_premium, 0)
+
                                                     roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                                     analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
 
@@ -5537,6 +5561,10 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 total_indemnity += indemnity
                                 total_producer_premium += producer_premium
 
+                            # Round accumulated values to eliminate floating-point errors
+                            total_indemnity = round_half_up(total_indemnity, 0)
+                            total_producer_premium = round_half_up(total_producer_premium, 0)
+
                             net_return = total_indemnity - total_producer_premium
                             roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
 
@@ -5612,6 +5640,10 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
 
                             total_indemnity += indemnity
                             total_producer_premium += producer_premium
+
+                        # Round accumulated values to eliminate floating-point errors
+                        total_indemnity = round_half_up(total_indemnity, 0)
+                        total_producer_premium = round_half_up(total_producer_premium, 0)
 
                         net_return = total_indemnity - total_producer_premium
                         roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -5802,8 +5834,8 @@ def render_tab3(session, grid_id, intended_use, productivity_factor, total_insur
                     trigger_level = coverage_level * 100
                     shortfall_pct = (trigger_level - roi_df['Actual Index Value']) / trigger_level
                     roi_df['Estimated Indemnity'] = (shortfall_pct * roi_df['Policy Protection Per Unit']).clip(lower=0).apply(lambda x: round_half_up(x, 0) if abs(x) >= 0.01 else 0.0)
-                    total_indemnity = roi_df['Estimated Indemnity'].sum()
-                    total_producer_prem = roi_df['Producer Premium'].sum()
+                    total_indemnity = roi_df['Estimated Indemnity'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
+                    total_producer_prem = roi_df['Producer Premium'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
                     year_roi = (total_indemnity - total_producer_prem) / total_producer_prem if total_producer_prem > 0 else 0.0
                     
                     year_results.append({
@@ -6122,8 +6154,8 @@ def render_tab5(session, grid_id, intended_use, productivity_factor, total_insur
                             trigger_level = coverage_level * 100
                             shortfall_pct = (trigger_level - roi_df['Actual Index Value']) / trigger_level
                             roi_df['Estimated Indemnity'] = (shortfall_pct * roi_df['Policy Protection Per Unit']).clip(lower=0).apply(lambda x: round_half_up(x, 0) if abs(x) >= 0.01 else 0.0)
-                            total_indemnity = roi_df['Estimated Indemnity'].sum()
-                            total_producer_prem = roi_df['Producer Premium'].sum()
+                            total_indemnity = roi_df['Estimated Indemnity'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
+                            total_producer_prem = roi_df['Producer Premium'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
                             year_roi = (total_indemnity - total_producer_prem) / total_producer_prem if total_producer_prem > 0 else 0.0
 
                             year_results.append({
@@ -6486,10 +6518,14 @@ def run_optimization_s4(
 
                 total_indemnity += indemnity
                 total_producer_premium += producer_premium
-                
+
+            # Round accumulated values to eliminate floating-point errors
+            total_indemnity = round_half_up(total_indemnity, 0)
+            total_producer_premium = round_half_up(total_producer_premium, 0)
+
             year_roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
             year_rois.append(year_roi)
-            
+
             total_indemnity_all_years += total_indemnity
             total_producer_premium_all_years += total_producer_premium
             
@@ -7295,15 +7331,15 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                                 shortfall_pct = (trigger_level - roi_df['Actual Index Value']) / trigger_level
                                 roi_df['Estimated Indemnity'] = (shortfall_pct * roi_df['Policy Protection Per Unit']).clip(lower=0).apply(lambda x: round_half_up(x, 0) if abs(x) >= 0.01 else 0.0)
 
-                                year_premium = roi_df['Producer Premium'].sum()
-                                year_indemnity = roi_df['Estimated Indemnity'].sum()
+                                year_premium = roi_df['Producer Premium'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
+                                year_indemnity = roi_df['Estimated Indemnity'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
 
                                 grid_total_premium += year_premium
                                 grid_total_indemnity += year_indemnity
 
                                 year_roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 grid_year_rois.append(year_roi)
-                            
+
                             grid_annual_premium = grid_total_premium / num_years
                             grid_annual_indemnity = grid_total_indemnity / num_years
                             grid_annual_net = grid_annual_indemnity - grid_annual_premium
@@ -7385,15 +7421,15 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                                     shortfall_pct = (trigger_level - roi_df['Actual Index Value']) / trigger_level
                                     roi_df['Estimated Indemnity'] = (shortfall_pct * roi_df['Policy Protection Per Unit']).clip(lower=0).apply(lambda x: round_half_up(x, 0) if abs(x) >= 0.01 else 0.0)
 
-                                    year_premium = roi_df['Producer Premium'].sum()
-                                    year_indemnity = roi_df['Estimated Indemnity'].sum()
+                                    year_premium = roi_df['Producer Premium'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
+                                    year_indemnity = roi_df['Estimated Indemnity'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
 
                                     grid_total_premium += year_premium
                                     grid_total_indemnity += year_indemnity
 
                                     year_roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                     grid_year_rois.append(year_roi)
-                                
+
                                 grid_cumulative_net = grid_total_indemnity - grid_total_premium
                                 
                                 # Calculate risk-adjusted return
@@ -7517,19 +7553,19 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                                 shortfall_pct = (trigger_level - roi_df['Actual Index Value']) / trigger_level
                                 roi_df['Estimated Indemnity'] = (shortfall_pct * roi_df['Policy Protection Per Unit']).clip(lower=0).apply(lambda x: round_half_up(x, 0) if abs(x) >= 0.01 else 0.0)
 
-                                year_premium = roi_df['Producer Premium'].sum()
-                                year_indemnity = roi_df['Estimated Indemnity'].sum()
+                                year_premium = roi_df['Producer Premium'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
+                                year_indemnity = roi_df['Estimated Indemnity'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
 
                                 curr_grid_premium += year_premium
                                 curr_grid_indemnity += year_indemnity
 
                                 year_roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 curr_grid_rois.append(year_roi)
-                            
+
                             current_total_premium += curr_grid_premium
                             current_total_indemnity += curr_grid_indemnity
                             current_year_rois.extend(curr_grid_rois)
-                            
+
                             # Calculate for SUGGESTED allocation (already calculated in grid_results)
                             sugg_grid_premium = 0
                             sugg_grid_indemnity = 0
@@ -7554,15 +7590,15 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                                 shortfall_pct = (trigger_level - roi_df['Actual Index Value']) / trigger_level
                                 roi_df['Estimated Indemnity'] = (shortfall_pct * roi_df['Policy Protection Per Unit']).clip(lower=0).apply(lambda x: round_half_up(x, 0) if abs(x) >= 0.01 else 0.0)
 
-                                year_premium = roi_df['Producer Premium'].sum()
-                                year_indemnity = roi_df['Estimated Indemnity'].sum()
+                                year_premium = roi_df['Producer Premium'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
+                                year_indemnity = roi_df['Estimated Indemnity'].apply(lambda x: round_half_up(x, 0) if pd.notna(x) else 0).sum()
 
                                 sugg_grid_premium += year_premium
                                 sugg_grid_indemnity += year_indemnity
 
                                 year_roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 sugg_grid_rois.append(year_roi)
-                            
+
                             suggested_total_premium += sugg_grid_premium
                             suggested_total_indemnity += sugg_grid_indemnity
                             suggested_year_rois.extend(sugg_grid_rois)
