@@ -2018,6 +2018,71 @@ def optimize_grid_allocation(
             if gid not in optimized_acres:
                 optimized_acres[gid] = budget_adjusted_baseline.get(gid, 0)
 
+        # === STAGE 3: Post-MVO Budget Fill-up (when auto-fill enabled) ===
+        # After MVO rebalances, the total cost may be under budget if allocation shifted
+        # from higher-premium grids to lower-premium grids. Scale up to hit 99.95% of budget.
+        if allow_scale_up:
+            # Calculate current cost after MVO rebalancing
+            mvo_cost, _ = calculate_annual_premium_cost(
+                session, selected_grids, optimized_acres, grid_results,
+                productivity_factor, intended_use, plan_code
+            )
+
+            target_budget = annual_budget * 0.9995  # Target 99.95% utilization
+
+            if mvo_cost > 0 and mvo_cost < target_budget * 0.999:  # Under-utilized (below 99.9%)
+                # Calculate scale factor to hit target budget
+                scale_factor = target_budget / mvo_cost
+
+                # Define max acres per grid (e.g., 3x initial allocation to prevent extreme concentration)
+                max_acres_per_grid = {
+                    gid: initial_acres_per_grid.get(gid, 0) * 3.0
+                    for gid in selected_grids
+                }
+
+                # Apply scaling with iterative redistribution to handle max constraints
+                scaled_acres = {gid: acres * scale_factor for gid, acres in optimized_acres.items()}
+
+                # Cap at max acres
+                for gid in scaled_acres:
+                    if max_acres_per_grid.get(gid, float('inf')) > 0:
+                        scaled_acres[gid] = min(scaled_acres[gid], max_acres_per_grid[gid])
+
+                # Iterative redistribution: if some grids hit max, redistribute remaining budget to others
+                for iteration in range(10):  # Max iterations to prevent infinite loop
+                    new_cost, _ = calculate_annual_premium_cost(
+                        session, selected_grids, scaled_acres, grid_results,
+                        productivity_factor, intended_use, plan_code
+                    )
+
+                    if new_cost >= annual_budget * 0.9990:  # Close enough (99.90%)
+                        break
+
+                    # Find grids not at max that can absorb more acres
+                    can_scale_grids = [
+                        gid for gid in selected_grids
+                        if scaled_acres.get(gid, 0) < max_acres_per_grid.get(gid, float('inf')) * 0.99
+                    ]
+
+                    if not can_scale_grids:
+                        break  # All grids at max
+
+                    # Calculate additional scale factor for remaining budget
+                    remaining_budget = target_budget - new_cost
+                    if remaining_budget <= 0 or new_cost <= 0:
+                        break
+
+                    # Conservative step: scale up non-maxed grids proportionally
+                    additional_scale = 1 + (remaining_budget / new_cost) * 0.5
+
+                    for gid in can_scale_grids:
+                        proposed = scaled_acres[gid] * additional_scale
+                        scaled_acres[gid] = min(proposed, max_acres_per_grid.get(gid, proposed))
+
+                optimized_acres = scaled_acres
+                optimization_info['stage3_applied'] = True
+                optimization_info['stage3_scale_factor'] = scale_factor
+
         return optimized_acres, roi_correlation, optimization_info
 
     except Exception as e:
@@ -3953,6 +4018,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         if scale_factor != 1.0:
                             st.info(f"**Stage 1 - Budget scaling:** {initial_total:,.0f} → {scaled_total:,.0f} acres ({scale_factor:.1%} of original)")
                         st.info(f"**Stage 2 - MVO rebalancing:** Grid weights adjusted within ±{max_turnover:.0%} turnover bounds")
+                        # Show Stage 3 messaging if it was applied
+                        if opt_info.get('stage3_applied', False):
+                            stage3_scale = opt_info.get('stage3_scale_factor', 1.0)
+                            st.success(f"**Stage 3 - Budget fill-up:** Acres scaled up by {stage3_scale:.1%} to utilize full budget")
                     else:
                         # MVO without budget - use optimize_without_budget
                         total_acres = sum(initial_challenger_acres.values())
@@ -4875,8 +4944,74 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                                         st.info(f"**MVO rebalancing:** Grid weights adjusted within ±{weather3_max_turnover:.0%} turnover bounds")
 
-                                    # === STAGE 3: Final Backtest ===
-                                    st.write("**Stage 3: Running Final Backtest...**")
+                                        # === Stage 3: Post-MVO Budget Fill-up (when auto-fill enabled) ===
+                                        # After MVO rebalances, the total cost may be under budget if allocation shifted
+                                        # from higher-premium grids to lower-premium grids. Scale up to hit 99.95% of budget.
+                                        if weather3_enable_budget and weather3_allow_scale_up:
+                                            # Build grid_results structure for cost calculation
+                                            grid_results_for_cost = {
+                                                gid: {'best_strategy': {'allocation': weather3_allocations[gid], 'coverage_level': coverage_level}}
+                                                for gid in weather_grids_gen
+                                            }
+
+                                            # Calculate current cost after MVO
+                                            mvo_cost, _ = calculate_annual_premium_cost(
+                                                session, weather_grids_gen, weather3_acres, grid_results_for_cost,
+                                                productivity_factor, intended_use, plan_code
+                                            )
+
+                                            target_budget = weather3_annual_budget * 0.9995  # Target 99.95% utilization
+
+                                            if mvo_cost > 0 and mvo_cost < target_budget * 0.999:  # Under-utilized (below 99.9%)
+                                                scale_factor_stage3 = target_budget / mvo_cost
+
+                                                # Define max acres per grid (3x initial to prevent extreme concentration)
+                                                max_acres_per_grid = {
+                                                    gid: weather_acres_gen.get(gid, 0) * 3.0
+                                                    for gid in weather_grids_gen
+                                                }
+
+                                                # Apply scaling with cap
+                                                scaled_acres = {gid: acres * scale_factor_stage3 for gid, acres in weather3_acres.items()}
+                                                for gid in scaled_acres:
+                                                    if max_acres_per_grid.get(gid, float('inf')) > 0:
+                                                        scaled_acres[gid] = min(scaled_acres[gid], max_acres_per_grid[gid])
+
+                                                # Iterative redistribution if some grids hit max
+                                                for iteration in range(10):
+                                                    new_cost, _ = calculate_annual_premium_cost(
+                                                        session, weather_grids_gen, scaled_acres, grid_results_for_cost,
+                                                        productivity_factor, intended_use, plan_code
+                                                    )
+
+                                                    if new_cost >= weather3_annual_budget * 0.9990:  # Close enough (99.90%)
+                                                        break
+
+                                                    # Find grids not at max that can absorb more acres
+                                                    can_scale_grids = [
+                                                        gid for gid in weather_grids_gen
+                                                        if scaled_acres.get(gid, 0) < max_acres_per_grid.get(gid, float('inf')) * 0.99
+                                                    ]
+
+                                                    if not can_scale_grids:
+                                                        break  # All grids at max
+
+                                                    remaining_budget = target_budget - new_cost
+                                                    if remaining_budget <= 0 or new_cost <= 0:
+                                                        break
+
+                                                    # Conservative step: scale up non-maxed grids proportionally
+                                                    additional_scale = 1 + (remaining_budget / new_cost) * 0.5
+
+                                                    for gid in can_scale_grids:
+                                                        proposed = scaled_acres[gid] * additional_scale
+                                                        scaled_acres[gid] = min(proposed, max_acres_per_grid.get(gid, proposed))
+
+                                                weather3_acres = scaled_acres
+                                                st.success(f"**Stage 3 - Budget fill-up:** Acres scaled up by {scale_factor_stage3:.1%} to utilize full budget")
+
+                                    # === STAGE 4: Final Backtest ===
+                                    st.write("**Stage 4: Running Final Backtest...**")
 
                                     weather3_df, weather3_grid_results, weather3_metrics = run_portfolio_backtest(
                                         session=session,
@@ -6755,6 +6890,16 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
             st.caption("With Uniform Acres, budget constraint uses Equal Scaling only")
             budget_method = "Equal Scaling"
 
+        # Auto-fill budget option (scale up if under budget)
+        s4_allow_scale_up = st.checkbox(
+            "Auto-fill budget (scale up if under)",
+            value=False,
+            help="When enabled, if the optimized allocation costs less than the budget, acres will be scaled up proportionally to utilize the full budget.",
+            key="s4_allow_scale_up"
+        )
+    else:
+        s4_allow_scale_up = False
+
     st.divider()
 
     if 'tab4_run' not in st.session_state:
@@ -6900,7 +7045,7 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                             selected_grids=selected_grids,
                             risk_aversion=risk_aversion,
                             max_turnover=max_turnover,
-                            allow_scale_up=False
+                            allow_scale_up=s4_allow_scale_up
                         )
                         scale_factor = opt_info.get('budget_scale_factor', 1.0)
                         initial_total = opt_info.get('initial_total_acres', 0)
@@ -6909,6 +7054,11 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                             stage2_info = f"Budget scaled {initial_total:,.0f} → {scaled_total:,.0f} acres, then MVO rebalanced within ±{max_turnover:.0%}"
                         else:
                             stage2_info = f"Acre distribution optimized within ±{max_turnover:.0%} turnover bounds"
+
+                        # Add Stage 3 info if it was applied
+                        if opt_info.get('stage3_applied', False):
+                            stage3_scale = opt_info.get('stage3_scale_factor', 1.0)
+                            stage2_info += f", then scaled up by {stage3_scale:.1%} to fill budget"
 
                     elif enable_budget and budget_method == "Equal Scaling":
                         # Calculate cost with initial acres, then scale
