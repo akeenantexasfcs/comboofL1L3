@@ -2280,6 +2280,7 @@ def generate_strategy_report_docx(
                     run.font.size = Pt(8)
 
         # Data rows
+        total_acres = 0
         for gid in grids:
             row_cells = table.add_row().cells
             row_cells[0].text = str(gid)
@@ -2287,7 +2288,22 @@ def generate_strategy_report_docx(
             for idx, interval in enumerate(INTERVAL_ORDER_11):
                 pct = alloc.get(interval, 0)
                 row_cells[idx + 1].text = f"{pct*100:.0f}%" if pct > 0 else "-"
-            row_cells[len(INTERVAL_ORDER_11) + 1].text = f"{acres.get(gid, 0):,.0f}"
+            grid_acres = acres.get(gid, 0)
+            row_cells[len(INTERVAL_ORDER_11) + 1].text = f"{grid_acres:,.0f}"
+            total_acres += grid_acres
+
+        # Add TOTAL row
+        total_row_cells = table.add_row().cells
+        total_row_cells[0].text = "TOTAL"
+        for paragraph in total_row_cells[0].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+        for idx in range(len(INTERVAL_ORDER_11)):
+            total_row_cells[idx + 1].text = "--"
+        total_row_cells[len(INTERVAL_ORDER_11) + 1].text = f"{total_acres:,.0f}"
+        for paragraph in total_row_cells[len(INTERVAL_ORDER_11) + 1].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
 
         doc.add_paragraph()
 
