@@ -999,6 +999,7 @@ def calculate_vectorized_roi(weights_batch, index_matrix, premium_rates_array,
                               coverage_level, subsidy, total_protection):
     """
     Vectorized ROI calculation for a batch of weight candidates.
+    Uses proper rounding at each step to match PRF official tool calculations.
 
     Args:
         weights_batch: numpy array of shape (n_candidates, 11) - allocation weights
@@ -1014,12 +1015,18 @@ def calculate_vectorized_roi(weights_batch, index_matrix, premium_rates_array,
     n_candidates = weights_batch.shape[0]
     n_years = index_matrix.shape[0]
 
+    # Vectorized round_half_up for numpy arrays
+    def np_round_half_up(arr):
+        return np.floor(arr + 0.5)
+
     # Calculate protection per interval for each candidate: (n_candidates, 11)
-    interval_protection = weights_batch * total_protection
+    # Round at each step to match PRF tool
+    interval_protection = np_round_half_up(weights_batch * total_protection)
 
     # Calculate premium per interval: (n_candidates, 11)
-    total_premium = interval_protection * premium_rates_array
-    producer_premium = total_premium * (1 - subsidy)
+    total_premium = np_round_half_up(interval_protection * premium_rates_array)
+    premium_subsidy = np_round_half_up(total_premium * subsidy)
+    producer_premium = total_premium - premium_subsidy
 
     # Sum producer premium across intervals for each candidate: (n_candidates,)
     annual_premium = producer_premium.sum(axis=1)
@@ -1041,8 +1048,10 @@ def calculate_vectorized_roi(weights_batch, index_matrix, premium_rates_array,
     shortfall_expanded = shortfall_pct[np.newaxis, :, :]  # (1, n_years, 11)
     protection_expanded = interval_protection[:, np.newaxis, :]  # (n_candidates, 1, 11)
 
-    # Indemnity: (n_candidates, n_years, 11)
-    indemnity = shortfall_expanded * protection_expanded
+    # Indemnity per interval per year: (n_candidates, n_years, 11)
+    raw_indemnity = shortfall_expanded * protection_expanded
+    # Round indemnity, but set to 0 if raw value < 0.01 (PRF tool behavior)
+    indemnity = np.where(raw_indemnity >= 0.01, np_round_half_up(raw_indemnity), 0)
 
     # Sum across years and intervals: (n_candidates,)
     total_indemnity = indemnity.sum(axis=(1, 2))
@@ -1379,10 +1388,16 @@ def run_analog_year_optimization(
     if objective != 'cumulative_roi':
         n_candidates = weights_batch.shape[0]
 
+        # Vectorized round_half_up for numpy arrays
+        def np_round_half_up(arr):
+            return np.floor(arr + 0.5)
+
         # Calculate protection and premium per interval for each candidate
-        interval_protection = weights_batch * total_protection
-        total_premium_per_interval = interval_protection * premium_rates_array
-        producer_premium_per_interval = total_premium_per_interval * (1 - subsidy)
+        # Round at each step to match PRF tool
+        interval_protection = np_round_half_up(weights_batch * total_protection)
+        total_premium_per_interval = np_round_half_up(interval_protection * premium_rates_array)
+        premium_subsidy_per_interval = np_round_half_up(total_premium_per_interval * subsidy)
+        producer_premium_per_interval = total_premium_per_interval - premium_subsidy_per_interval
         annual_premium = producer_premium_per_interval.sum(axis=1)  # (n_candidates,)
 
         trigger = coverage_level * 100
@@ -1399,7 +1414,12 @@ def run_analog_year_optimization(
                 continue
 
             for y_idx in range(n_years):
-                year_indemnity = np.sum(shortfall_pct[y_idx, :] * interval_protection[c_idx, :])
+                # Calculate raw indemnity per interval
+                raw_indemnity_per_interval = shortfall_pct[y_idx, :] * interval_protection[c_idx, :]
+                # Round indemnity, but set to 0 if raw value < 0.01 (PRF tool behavior)
+                indemnity_per_interval = np.where(raw_indemnity_per_interval >= 0.01,
+                                                   np_round_half_up(raw_indemnity_per_interval), 0)
+                year_indemnity = np.sum(indemnity_per_interval)
                 yearly_roi[c_idx, y_idx] = (year_indemnity - prem) / prem
 
         # Calculate objective scores based on selection
