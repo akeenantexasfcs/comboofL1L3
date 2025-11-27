@@ -407,6 +407,16 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
                 if not (trend_bounds['min'] <= portfolio_trajectory < trend_bounds['max']):
                     continue
 
+        # Count ENSO intervals across all grids for this year
+        la_nina_count = 0
+        el_nino_count = 0
+        for gid, df in all_grid_data.items():
+            year_df = df[df['YEAR'] == year]
+            if not year_df.empty:
+                phases = year_df['OPTICAL_MAPPING_CPC'].dropna()
+                la_nina_count += (phases == 'La Nina').sum()
+                el_nino_count += (phases == 'El Nino').sum()
+
         # Year matches all criteria
         matching_years.append({
             'year': year,
@@ -414,7 +424,9 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
             'phase_agreement': phase_agreement,
             'portfolio_avg_z': portfolio_avg_z,
             'portfolio_trajectory': portfolio_trajectory,
-            'grids_with_data': len(year_grid_data)
+            'grids_with_data': len(year_grid_data),
+            'la_nina_intervals': la_nina_count,
+            'el_nino_intervals': el_nino_count
         })
 
     return matching_years
@@ -4415,24 +4427,50 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                             analog_df = analog_df.rename(columns={
                                 'year': 'Year',
-                                'dominant_phase': 'ENSO Phase',
+                                'dominant_phase': 'Dominant ENSO Phase',
                                 'portfolio_avg_z': 'Portfolio Avg Z',
                                 'portfolio_trajectory': 'Avg Trajectory',
-                                'grids_with_data': 'Grids w/ Data'
+                                'grids_with_data': 'Grids w/ Data',
+                                'la_nina_intervals': 'La Nina Intervals',
+                                'el_nino_intervals': 'El Nino Intervals'
                             })
 
+                            # Get current ENSO filter to determine which columns to display
+                            current_enso_filter = st.session_state.get('ps_weather_enso', 'Any')
+
+                            # Select columns to display based on filter
+                            base_columns = ['Year', 'Dominant ENSO Phase', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
+
+                            if current_enso_filter == 'Some La Nina' and 'La Nina Intervals' in analog_df.columns:
+                                display_columns = ['Year', 'Dominant ENSO Phase', 'La Nina Intervals', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
+                            elif current_enso_filter == 'Some El Nino' and 'El Nino Intervals' in analog_df.columns:
+                                display_columns = ['Year', 'Dominant ENSO Phase', 'El Nino Intervals', 'Portfolio Avg Z', 'Avg Trajectory', 'Grids w/ Data']
+                            else:
+                                display_columns = base_columns
+
+                            # Filter to only existing columns
+                            display_columns = [c for c in display_columns if c in analog_df.columns]
+                            analog_df_display = analog_df[display_columns]
+
+                            # Build format dict dynamically
+                            format_dict = {
+                                'Year': '{:.0f}',
+                                'Portfolio Avg Z': '{:.3f}',
+                                'Avg Trajectory': '{:.3f}',
+                                'Grids w/ Data': '{:.0f}'
+                            }
+                            if 'La Nina Intervals' in analog_df_display.columns:
+                                format_dict['La Nina Intervals'] = '{:.0f}'
+                            if 'El Nino Intervals' in analog_df_display.columns:
+                                format_dict['El Nino Intervals'] = '{:.0f}'
+
                             st.dataframe(
-                                analog_df.style.format({
-                                    'Year': '{:.0f}',
-                                    'Portfolio Avg Z': '{:.3f}',
-                                    'Avg Trajectory': '{:.3f}',
-                                    'Grids w/ Data': '{:.0f}'
-                                }),
+                                analog_df_display.style.format(format_dict),
                                 use_container_width=True,
                                 hide_index=True
                             )
 
-                            # Download button
+                            # Download button (includes all columns for full data)
                             csv_data = analog_df.to_csv(index=False)
                             st.download_button(
                                 label="📥 Download Analog Years CSV",
