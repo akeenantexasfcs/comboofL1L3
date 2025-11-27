@@ -358,7 +358,34 @@ def calculate_portfolio_aggregated_analog_years(session, selected_grids, regime,
 
         # Apply filters
         # ENSO regime filter
-        if regime != 'Any':
+        if regime == 'Some La Nina':
+            # Check if any grid-year has at least one La Nina interval
+            has_la_nina = False
+            for gid, df in all_grid_data.items():
+                year_df = df[df['YEAR'] == year]
+                if not year_df.empty:
+                    phases = year_df['OPTICAL_MAPPING_CPC'].dropna()
+                    if 'La Nina' in phases.values:
+                        has_la_nina = True
+                        break
+            if not has_la_nina:
+                continue
+
+        elif regime == 'Some El Nino':
+            # Check if any grid-year has at least one El Nino interval
+            has_el_nino = False
+            for gid, df in all_grid_data.items():
+                year_df = df[df['YEAR'] == year]
+                if not year_df.empty:
+                    phases = year_df['OPTICAL_MAPPING_CPC'].dropna()
+                    if 'El Nino' in phases.values:
+                        has_el_nino = True
+                        break
+            if not has_el_nino:
+                continue
+
+        elif regime != 'Any':
+            # Existing strict matching logic for La Nina, El Nino, Neutral
             if regime == 'La Nina' and dominant_phase != 'La Nina':
                 continue
             elif regime == 'El Nino' and dominant_phase != 'El Nino':
@@ -4287,9 +4314,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 with mv_col1:
                     enso_regime = st.selectbox(
                         "ENSO Regime",
-                        options=["La Nina", "El Nino", "Neutral", "Any"],
+                        options=["La Nina", "El Nino", "Neutral", "Some La Nina", "Some El Nino", "Any"],
                         index=0,
-                        key="ps_weather_enso"
+                        key="ps_weather_enso",
+                        help="Strict filters (La Nina/El Nino/Neutral) require majority of intervals. 'Some' filters include years with at least one interval of that phase."
                     )
 
                 with mv_col2:
