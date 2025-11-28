@@ -3581,23 +3581,16 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     except:
         all_grids = [grid_id]
 
-    col1, col2 = st.columns([3, 1])
-
-    with col2:
-        # Button with on_click callback - triggers BEFORE page reloads
-        st.button("Load King Ranch", key="ps_load_kr", on_click=load_king_ranch_callback)
-
-    with col1:
-        default_grids = st.session_state.get('ps_grids', [grid_id])
-        # Ensure default_grids only contains valid options
-        default_grids = [g for g in default_grids if g in all_grids]
-        selected_grids = st.multiselect(
-            "Select Grids for Portfolio",
-            options=all_grids,
-            default=default_grids,
-            max_selections=20,
-            key="ps_grids"
-        )
+    default_grids = st.session_state.get('ps_grids', [grid_id])
+    # Ensure default_grids only contains valid options
+    default_grids = [g for g in default_grids if g in all_grids]
+    selected_grids = st.multiselect(
+        "Select Grids for Portfolio",
+        options=all_grids,
+        default=default_grids,
+        max_selections=20,
+        key="ps_grids"
+    )
 
     if not selected_grids:
         st.warning("Select at least one grid to continue.")
@@ -4399,15 +4392,21 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         if enable_weather_challengers:
             # --- Grid Selection for Weather Portfolio ---
             st.markdown("**Step 2.1: Select Grids for Weather Portfolio**")
-            st.caption("Weather portfolio can use different grids than Champion. Default is Champion's grids.")
+            st.caption("Weather portfolio can use different grids than Champion. Default is Challenger's grids (Champion + Incrementals).")
 
-            # Default to Champion's grids
-            champ_grids_for_weather = st.session_state.champion_results.get('grids', [])
+            # Default to Challenger's grids (Champion + Incrementals) if available, else Champion's grids
+            if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                default_weather_grids = st.session_state.challenger_results.get('grids', [])
+            else:
+                default_weather_grids = st.session_state.champion_results.get('grids', [])
+
+            # Filter to only valid options
+            default_weather_grids = [g for g in default_weather_grids if g in all_grids]
 
             weather_grids = st.multiselect(
                 "Weather Portfolio Grids",
                 options=all_grids,
-                default=champ_grids_for_weather,
+                default=default_weather_grids,
                 max_selections=20,
                 key="ps_weather_grids"
             )
@@ -4421,13 +4420,19 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 acre_cols = st.columns(min(4, len(weather_grids)))
                 for idx, gid in enumerate(weather_grids):
                     with acre_cols[idx % 4]:
-                        # Default to Champion acres if available, else use sidebar default
-                        champ_acres_map = st.session_state.champion_results.get('acres', {})
-                        default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                        # Default to Challenger acres if available, else Champion acres, else sidebar default
+                        if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                            challenger_acres_map = st.session_state.challenger_results.get('acres', {})
+                            champ_acres_map = st.session_state.champion_results.get('acres', {})
+                            # Prefer Challenger acres, fall back to Champion acres
+                            default_acres = challenger_acres_map.get(gid, champ_acres_map.get(gid, total_insured_acres // len(weather_grids)))
+                        else:
+                            champ_acres_map = st.session_state.champion_results.get('acres', {})
+                            default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
-                            value=int(default_acres),
+                            value=max(1, int(default_acres)),
                             step=10,
                             key=f"ps_weather_acres_{gid}"
                         )
