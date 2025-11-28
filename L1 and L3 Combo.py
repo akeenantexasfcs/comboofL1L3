@@ -170,6 +170,28 @@ def extract_county_from_grid_id(grid_id):
         return county_part
     return None
 
+def get_safe_acres(source_acres, gid, default_acres, min_acres=1):
+    """
+    Get acres from source with a minimum floor to prevent 0 values.
+
+    This is needed because MVO optimization may set some grids to 0 acres,
+    but st.number_input with min_value=1 will fail if given value=0.
+
+    Args:
+        source_acres: Dictionary of grid_id -> acres from source portfolio
+        gid: The grid ID to look up
+        default_acres: Default value if grid not found
+        min_acres: Minimum allowed acres (default 1)
+
+    Returns:
+        Integer acres value, guaranteed to be >= min_acres
+    """
+    acres = source_acres.get(gid, default_acres)
+    if acres < min_acres:
+        # If acres is 0 or near-zero, use default instead
+        return max(min_acres, int(default_acres))
+    return int(acres)
+
 st.set_page_config(layout="wide", page_title="PRF Backtesting Tool")
 
 # =============================================================================
@@ -4439,22 +4461,27 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                     source_grids = []
 
                 # Pre-populate session state for each weather grid
+                # Calculate default acres for fallback (distributed evenly across grids)
+                default_per_grid = max(1, total_insured_acres // len(weather_grids))
+
                 for gid in weather_grids:
                     key = f"ps_weather_acres_{gid}"
                     # Only set if key doesn't exist yet
                     if key not in st.session_state:
                         # Try to get acres from source, fall back to reasonable default
+                        # Use get_safe_acres to handle MVO-optimized 0 values
                         if gid in source_acres:
-                            st.session_state[key] = int(source_acres[gid])
+                            st.session_state[key] = get_safe_acres(source_acres, gid, default_per_grid)
                         else:
                             # Grid might be new - check if numeric ID matches
                             numeric_id = extract_numeric_grid_id(gid)
                             found_acres = None
                             for source_gid, acres in source_acres.items():
                                 if extract_numeric_grid_id(source_gid) == numeric_id:
-                                    found_acres = int(acres)
+                                    # Safeguard: ensure non-zero value
+                                    found_acres = max(1, int(acres)) if acres >= 1 else default_per_grid
                                     break
-                            st.session_state[key] = found_acres if found_acres else (total_insured_acres // len(weather_grids))
+                            st.session_state[key] = found_acres if found_acres else default_per_grid
 
                 # --- Acres per Grid ---
                 st.markdown("**Acres per Grid (Starting Population)**")
@@ -4467,12 +4494,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         for gid in weather_grids:
                             key = f"ps_weather_acres_{gid}"
                             if gid in challenger_acres:
-                                st.session_state[key] = int(challenger_acres[gid])
+                                # Safeguard: use get_safe_acres to handle MVO-optimized 0 values
+                                st.session_state[key] = get_safe_acres(challenger_acres, gid, default_per_grid)
                             else:
                                 numeric_id = extract_numeric_grid_id(gid)
                                 for c_gid, acres in challenger_acres.items():
                                     if extract_numeric_grid_id(c_gid) == numeric_id:
-                                        st.session_state[key] = int(acres)
+                                        # Safeguard: ensure non-zero value
+                                        st.session_state[key] = max(1, int(acres)) if acres >= 1 else default_per_grid
                                         break
                         st.rerun()
 
@@ -4481,10 +4510,11 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 for idx, gid in enumerate(weather_grids):
                     with acre_cols[idx % 4]:
                         # Session state was pre-populated above, so this will use those values
+                        # Final safeguard: max(1, value) ensures valid input even if session state has 0
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
-                            value=st.session_state.get(f"ps_weather_acres_{gid}", 10000),
+                            value=max(1, st.session_state.get(f"ps_weather_acres_{gid}", 10000)),
                             step=10,
                             key=f"ps_weather_acres_{gid}"
                         )
