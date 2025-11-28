@@ -4413,21 +4413,68 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             )
 
             if weather_grids:
+                # PRE-POPULATE acres in session state from Challenger/Champion results
+                # This must happen BEFORE the number_input widgets render
+                # Only set if the key doesn't exist yet (first time) or if we detect a source change
+
+                # Determine the best source for acres
+                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                    source_acres = st.session_state.challenger_results.get('acres', {})
+                    source_grids = st.session_state.challenger_results.get('grids', [])
+                elif 'champion_results' in st.session_state and st.session_state.champion_results:
+                    source_acres = st.session_state.champion_results.get('acres', {})
+                    source_grids = st.session_state.champion_results.get('grids', [])
+                else:
+                    source_acres = {}
+                    source_grids = []
+
+                # Pre-populate session state for each weather grid
+                for gid in weather_grids:
+                    key = f"ps_weather_acres_{gid}"
+                    # Only set if key doesn't exist yet
+                    if key not in st.session_state:
+                        # Try to get acres from source, fall back to reasonable default
+                        if gid in source_acres:
+                            st.session_state[key] = int(source_acres[gid])
+                        else:
+                            # Grid might be new - check if numeric ID matches
+                            numeric_id = extract_numeric_grid_id(gid)
+                            found_acres = None
+                            for source_gid, acres in source_acres.items():
+                                if extract_numeric_grid_id(source_gid) == numeric_id:
+                                    found_acres = int(acres)
+                                    break
+                            st.session_state[key] = found_acres if found_acres else (total_insured_acres // len(weather_grids))
+
                 # --- Acres per Grid ---
                 st.markdown("**Acres per Grid (Starting Population)**")
                 st.caption("Set acres for each grid. MVO optimization may adjust these.")
+
+                # Add sync button
+                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                    if st.button("🔄 Sync Acres from Challenger", key="ps_sync_weather_acres"):
+                        challenger_acres = st.session_state.challenger_results.get('acres', {})
+                        for gid in weather_grids:
+                            key = f"ps_weather_acres_{gid}"
+                            if gid in challenger_acres:
+                                st.session_state[key] = int(challenger_acres[gid])
+                            else:
+                                numeric_id = extract_numeric_grid_id(gid)
+                                for c_gid, acres in challenger_acres.items():
+                                    if extract_numeric_grid_id(c_gid) == numeric_id:
+                                        st.session_state[key] = int(acres)
+                                        break
+                        st.rerun()
 
                 weather_acres = {}
                 acre_cols = st.columns(min(4, len(weather_grids)))
                 for idx, gid in enumerate(weather_grids):
                     with acre_cols[idx % 4]:
-                        # Default to Champion acres if available, else use sidebar default
-                        champ_acres_map = st.session_state.champion_results.get('acres', {})
-                        default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                        # Session state was pre-populated above, so this will use those values
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
-                            value=int(default_acres),
+                            value=st.session_state.get(f"ps_weather_acres_{gid}", 10000),
                             step=10,
                             key=f"ps_weather_acres_{gid}"
                         )
