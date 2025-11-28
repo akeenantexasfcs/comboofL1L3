@@ -119,6 +119,28 @@ KING_RANCH_PRESET = {
     }
 }
 
+# === KING RANCH INCREMENTAL PRESET (Expansion grids for Challenger) ===
+KING_RANCH_INCREMENTAL_PRESET = {
+    'grids': [7930, 7931, 8231, 8528, 8529, 8828, 8829, 8830, 8831, 9131],
+    'counties': {
+        'Kenedy': [7930, 7931, 8231, 8829],
+        'Brooks': [8528, 8529],
+        'Kleberg': [8828, 8830, 8831, 9131]
+    },
+    'acres': {
+        7930: 40137,
+        7931: 40137,
+        8231: 40137,
+        8528: 26271,
+        8529: 26271,
+        8828: 50627,
+        8829: 40137,
+        8830: 50627,
+        8831: 50627,
+        9131: 50627
+    }
+}
+
 # === GRID ID HELPER FUNCTION ===
 def extract_numeric_grid_id(grid_id):
     """
@@ -1613,14 +1635,14 @@ def run_weather_mvo_optimization(
                     trigger = coverage_level * 100
                     shortfall = max(0, (trigger - index_value) / trigger)
                     raw_indemnity = shortfall * interval_protection
-                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Round accumulated values to eliminate floating-point errors
-                year_indemnity = round_half_up(year_indemnity, 0)
-                year_premium = round_half_up(year_premium, 0)
+                # Premium rounding (indemnity is already exact integer sum)
+                year_premium = int(round_half_up(year_premium, 0))
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -1778,14 +1800,14 @@ def calculate_yearly_roi_for_grid(
             trigger = coverage_level * 100
             shortfall_pct = max(0, (trigger - index_value) / trigger)
             raw_indemnity = shortfall_pct * interval_protection
-            indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+            # Convert to int immediately to ensure exact integer arithmetic when summing
+            indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
             total_indemnity += indemnity
             total_producer_premium += producer_premium
 
-        # Round accumulated values to eliminate floating-point errors
-        total_indemnity = round_half_up(total_indemnity, 0)
-        total_producer_premium = round_half_up(total_producer_premium, 0)
+        # Premium rounding (indemnity is already exact integer sum)
+        total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
         roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
 
@@ -2708,14 +2730,14 @@ def run_portfolio_backtest(
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
                     raw_indemnity = shortfall_pct * interval_protection
-                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Round accumulated values to eliminate floating-point errors
-                year_indemnity = round_half_up(year_indemnity, 0)
-                year_premium = round_half_up(year_premium, 0)
+                # Premium rounding (indemnity is already exact integer sum)
+                year_premium = int(round_half_up(year_premium, 0))
 
                 year_results.append({
                     'year': year,
@@ -2844,14 +2866,14 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
                     raw_indemnity = shortfall_pct * interval_protection
-                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Round accumulated values to eliminate floating-point errors
-                year_indemnity = round_half_up(year_indemnity, 0)
-                year_premium = round_half_up(year_premium, 0)
+                # Premium rounding (indemnity is already exact integer sum)
+                year_premium = int(round_half_up(year_premium, 0))
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -3460,6 +3482,93 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         st.session_state.ps_kr_load_requested = False
 
     # ==========================================================================
+    # SIDEBAR: LOAD KING RANCH (CHAMPION) HANDLER
+    # ==========================================================================
+    if st.session_state.get('sidebar_kr_champion_requested', False):
+        try:
+            all_grids_for_loading = load_distinct_grids(session)
+
+            target_grid_mapping = {}
+            for county, grid_ids in KING_RANCH_PRESET['counties'].items():
+                for gid_num in grid_ids:
+                    target_grid_mapping[gid_num] = f"{gid_num} ({county} - TX)"
+
+            preset_grid_ids = []
+            for numeric_id in KING_RANCH_PRESET['grids']:
+                target_str = target_grid_mapping.get(numeric_id, "")
+                if target_str in all_grids_for_loading:
+                    preset_grid_ids.append(target_str)
+                else:
+                    for grid_option in all_grids_for_loading:
+                        if extract_numeric_grid_id(grid_option) == numeric_id:
+                            preset_grid_ids.append(grid_option)
+                            break
+
+            # Set session state values
+            st.session_state.ps_grids = preset_grid_ids
+            st.session_state.productivity_factor = 1.35
+            st.session_state.ps_coverage = 0.75  # Set to 75% coverage
+
+            # Set acres for each grid
+            for gid in preset_grid_ids:
+                numeric_id = extract_numeric_grid_id(gid)
+                st.session_state[f"ps_champ_acres_{gid}"] = KING_RANCH_PRESET['acres'].get(numeric_id, total_insured_acres)
+
+            # Set allocations via preset keys (convert percentages to decimals)
+            for gid in preset_grid_ids:
+                numeric_id = extract_numeric_grid_id(gid)
+                alloc = KING_RANCH_PRESET['allocations'][numeric_id]
+                alloc_decimal = {interval: float(alloc.get(interval, 0.0)) / 100.0 for interval in INTERVAL_ORDER_11}
+                st.session_state[f"ps_champ_{gid}_preset_allocation"] = alloc_decimal
+
+            st.success("King Ranch Champion loaded! (8 grids, 135% productivity, 75% coverage)")
+
+        except Exception as e:
+            st.error(f"Error loading King Ranch Champion: {e}")
+
+        st.session_state.sidebar_kr_champion_requested = False
+
+    # ==========================================================================
+    # SIDEBAR: LOAD KING RANCH INCREMENTALS HANDLER
+    # ==========================================================================
+    if st.session_state.get('sidebar_kr_incrementals_requested', False):
+        try:
+            all_grids_for_loading = load_distinct_grids(session)
+
+            # Build mapping for incremental grids
+            target_grid_mapping = {}
+            for county, grid_ids in KING_RANCH_INCREMENTAL_PRESET['counties'].items():
+                for gid_num in grid_ids:
+                    target_grid_mapping[gid_num] = f"{gid_num} ({county} - TX)"
+
+            # Match grids
+            incremental_grid_ids = []
+            for numeric_id in KING_RANCH_INCREMENTAL_PRESET['grids']:
+                target_str = target_grid_mapping.get(numeric_id, "")
+                if target_str in all_grids_for_loading:
+                    incremental_grid_ids.append(target_str)
+                else:
+                    for grid_option in all_grids_for_loading:
+                        if extract_numeric_grid_id(grid_option) == numeric_id:
+                            incremental_grid_ids.append(grid_option)
+                            break
+
+            # Set incremental grids in session state
+            st.session_state.ps_incremental_grids = incremental_grid_ids
+
+            # Set acres for each incremental grid
+            for gid in incremental_grid_ids:
+                numeric_id = extract_numeric_grid_id(gid)
+                st.session_state[f"ps_incr_acres_{gid}"] = KING_RANCH_INCREMENTAL_PRESET['acres'].get(numeric_id, 40000)
+
+            st.success(f"King Ranch Incrementals loaded! ({len(incremental_grid_ids)} grids)")
+
+        except Exception as e:
+            st.error(f"Error loading King Ranch Incrementals: {e}")
+
+        st.session_state.sidebar_kr_incrementals_requested = False
+
+    # ==========================================================================
     # TOP SECTION: GLOBAL SETTINGS
     # ==========================================================================
     st.markdown("### Global Settings")
@@ -3740,10 +3849,12 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
         for idx, gid in enumerate(incremental_grids):
             with acre_cols[idx % 4]:
+                # Check session state first for preset values, otherwise use default
+                preset_acres = st.session_state.get(f"ps_incr_acres_{gid}", int(default_incremental_acres))
                 challenger_acres[gid] = st.number_input(
                     f"{gid}",
                     min_value=1,
-                    value=int(default_incremental_acres),
+                    value=preset_acres,
                     step=10,
                     key=f"ps_incr_acres_{gid}"
                 )
@@ -4075,14 +4186,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     trigger = coverage_level * 100
                                     shortfall = max(0, (trigger - index_value) / trigger)
                                     raw_indemnity = shortfall * interval_protection
-                                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                                     year_indemnity += indemnity
                                     year_premium += producer_prem
 
-                                # Round accumulated values to eliminate floating-point errors
-                                year_indemnity = round_half_up(year_indemnity, 0)
-                                year_premium = round_half_up(year_premium, 0)
+                                # Premium rounding (indemnity is already exact integer sum)
+                                year_premium = int(round_half_up(year_premium, 0))
 
                                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 base_data_rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -4905,14 +5016,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         trigger = coverage_level * 100
                                                         shortfall = max(0, (trigger - index_value) / trigger)
                                                         raw_indemnity = shortfall * interval_protection
-                                                        indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                                                        # Convert to int immediately to ensure exact integer arithmetic when summing
+                                                        indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                                                         year_indemnity += indemnity
                                                         year_premium += producer_premium
 
-                                                    # Round accumulated values to eliminate floating-point errors
-                                                    year_indemnity = round_half_up(year_indemnity, 0)
-                                                    year_premium = round_half_up(year_premium, 0)
+                                                    # Premium rounding (indemnity is already exact integer sum)
+                                                    year_premium = int(round_half_up(year_premium, 0))
 
                                                     roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                                     analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -5635,14 +5746,14 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 trigger = coverage_level * 100
                                 shortfall_pct = max(0, (trigger - index_value) / trigger)
                                 raw_indemnity = shortfall_pct * interval_protection
-                                indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                                # Convert to int immediately to ensure exact integer arithmetic when summing
+                                indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                                 total_indemnity += indemnity
                                 total_producer_premium += producer_premium
 
-                            # Round accumulated values to eliminate floating-point errors
-                            total_indemnity = round_half_up(total_indemnity, 0)
-                            total_producer_premium = round_half_up(total_producer_premium, 0)
+                            # Premium rounding (indemnity is already exact integer sum)
+                            total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
                             net_return = total_indemnity - total_producer_premium
                             roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -5716,14 +5827,14 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             trigger = coverage_level * 100
                             shortfall_pct = max(0, (trigger - index_value) / trigger)
                             raw_indemnity = shortfall_pct * interval_protection
-                            indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                            # Convert to int immediately to ensure exact integer arithmetic when summing
+                            indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                             total_indemnity += indemnity
                             total_producer_premium += producer_premium
 
-                        # Round accumulated values to eliminate floating-point errors
-                        total_indemnity = round_half_up(total_indemnity, 0)
-                        total_producer_premium = round_half_up(total_producer_premium, 0)
+                        # Premium rounding (indemnity is already exact integer sum)
+                        total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
                         net_return = total_indemnity - total_producer_premium
                         roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -6595,14 +6706,14 @@ def run_optimization_s4(
                 trigger = coverage_level * 100
                 shortfall_pct = max(0, (trigger - index_value) / trigger)
                 raw_indemnity = shortfall_pct * interval_protection
-                indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                # Convert to int immediately to ensure exact integer arithmetic when summing
+                indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                 total_indemnity += indemnity
                 total_producer_premium += producer_premium
 
-            # Round accumulated values to eliminate floating-point errors
-            total_indemnity = round_half_up(total_indemnity, 0)
-            total_producer_premium = round_half_up(total_producer_premium, 0)
+            # Premium rounding (indemnity is already exact integer sum)
+            total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
             year_roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
             year_rois.append(year_roi)
@@ -7963,7 +8074,15 @@ def main():
 
         st.sidebar.success("Champion vs Challenger cleared!")
         st.rerun()
-    
+
+    if st.sidebar.button("🏠 Load King Ranch (Champion)", key="sidebar_load_kr_champ"):
+        st.session_state.sidebar_kr_champion_requested = True
+        st.rerun()
+
+    if st.sidebar.button("📈 Load King Ranch Incrementals", key="sidebar_load_kr_incr"):
+        st.session_state.sidebar_kr_incrementals_requested = True
+        st.rerun()
+
     tab1, tab2, tab3 = st.tabs([
         "Decision Support (Audit)",
         "Portfolio Backtest (Audit)",
