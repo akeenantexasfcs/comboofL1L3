@@ -1613,14 +1613,14 @@ def run_weather_mvo_optimization(
                     trigger = coverage_level * 100
                     shortfall = max(0, (trigger - index_value) / trigger)
                     raw_indemnity = shortfall * interval_protection
-                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Round accumulated values to eliminate floating-point errors
-                year_indemnity = round_half_up(year_indemnity, 0)
-                year_premium = round_half_up(year_premium, 0)
+                # Premium rounding (indemnity is already exact integer sum)
+                year_premium = int(round_half_up(year_premium, 0))
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -1778,14 +1778,14 @@ def calculate_yearly_roi_for_grid(
             trigger = coverage_level * 100
             shortfall_pct = max(0, (trigger - index_value) / trigger)
             raw_indemnity = shortfall_pct * interval_protection
-            indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+            # Convert to int immediately to ensure exact integer arithmetic when summing
+            indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
             total_indemnity += indemnity
             total_producer_premium += producer_premium
 
-        # Round accumulated values to eliminate floating-point errors
-        total_indemnity = round_half_up(total_indemnity, 0)
-        total_producer_premium = round_half_up(total_producer_premium, 0)
+        # Premium rounding (indemnity is already exact integer sum)
+        total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
         roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
 
@@ -2708,14 +2708,14 @@ def run_portfolio_backtest(
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
                     raw_indemnity = shortfall_pct * interval_protection
-                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Round accumulated values to eliminate floating-point errors
-                year_indemnity = round_half_up(year_indemnity, 0)
-                year_premium = round_half_up(year_premium, 0)
+                # Premium rounding (indemnity is already exact integer sum)
+                year_premium = int(round_half_up(year_premium, 0))
 
                 year_results.append({
                     'year': year,
@@ -2844,14 +2844,14 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
                     raw_indemnity = shortfall_pct * interval_protection
-                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Round accumulated values to eliminate floating-point errors
-                year_indemnity = round_half_up(year_indemnity, 0)
-                year_premium = round_half_up(year_premium, 0)
+                # Premium rounding (indemnity is already exact integer sum)
+                year_premium = int(round_half_up(year_premium, 0))
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -4075,14 +4075,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     trigger = coverage_level * 100
                                     shortfall = max(0, (trigger - index_value) / trigger)
                                     raw_indemnity = shortfall * interval_protection
-                                    indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                                    # Convert to int immediately to ensure exact integer arithmetic when summing
+                                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                                     year_indemnity += indemnity
                                     year_premium += producer_prem
 
-                                # Round accumulated values to eliminate floating-point errors
-                                year_indemnity = round_half_up(year_indemnity, 0)
-                                year_premium = round_half_up(year_premium, 0)
+                                # Premium rounding (indemnity is already exact integer sum)
+                                year_premium = int(round_half_up(year_premium, 0))
 
                                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 base_data_rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -4905,14 +4905,14 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         trigger = coverage_level * 100
                                                         shortfall = max(0, (trigger - index_value) / trigger)
                                                         raw_indemnity = shortfall * interval_protection
-                                                        indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                                                        # Convert to int immediately to ensure exact integer arithmetic when summing
+                                                        indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                                                         year_indemnity += indemnity
                                                         year_premium += producer_premium
 
-                                                    # Round accumulated values to eliminate floating-point errors
-                                                    year_indemnity = round_half_up(year_indemnity, 0)
-                                                    year_premium = round_half_up(year_premium, 0)
+                                                    # Premium rounding (indemnity is already exact integer sum)
+                                                    year_premium = int(round_half_up(year_premium, 0))
 
                                                     roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                                     analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -5635,14 +5635,14 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 trigger = coverage_level * 100
                                 shortfall_pct = max(0, (trigger - index_value) / trigger)
                                 raw_indemnity = shortfall_pct * interval_protection
-                                indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                                # Convert to int immediately to ensure exact integer arithmetic when summing
+                                indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                                 total_indemnity += indemnity
                                 total_producer_premium += producer_premium
 
-                            # Round accumulated values to eliminate floating-point errors
-                            total_indemnity = round_half_up(total_indemnity, 0)
-                            total_producer_premium = round_half_up(total_producer_premium, 0)
+                            # Premium rounding (indemnity is already exact integer sum)
+                            total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
                             net_return = total_indemnity - total_producer_premium
                             roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -5716,14 +5716,14 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             trigger = coverage_level * 100
                             shortfall_pct = max(0, (trigger - index_value) / trigger)
                             raw_indemnity = shortfall_pct * interval_protection
-                            indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                            # Convert to int immediately to ensure exact integer arithmetic when summing
+                            indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                             total_indemnity += indemnity
                             total_producer_premium += producer_premium
 
-                        # Round accumulated values to eliminate floating-point errors
-                        total_indemnity = round_half_up(total_indemnity, 0)
-                        total_producer_premium = round_half_up(total_producer_premium, 0)
+                        # Premium rounding (indemnity is already exact integer sum)
+                        total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
                         net_return = total_indemnity - total_producer_premium
                         roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -6595,14 +6595,14 @@ def run_optimization_s4(
                 trigger = coverage_level * 100
                 shortfall_pct = max(0, (trigger - index_value) / trigger)
                 raw_indemnity = shortfall_pct * interval_protection
-                indemnity = round_half_up(raw_indemnity, 0) if raw_indemnity >= 0.01 else 0
+                # Convert to int immediately to ensure exact integer arithmetic when summing
+                indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
 
                 total_indemnity += indemnity
                 total_producer_premium += producer_premium
 
-            # Round accumulated values to eliminate floating-point errors
-            total_indemnity = round_half_up(total_indemnity, 0)
-            total_producer_premium = round_half_up(total_producer_premium, 0)
+            # Premium rounding (indemnity is already exact integer sum)
+            total_producer_premium = int(round_half_up(total_producer_premium, 0))
 
             year_roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
             year_rois.append(year_roi)
