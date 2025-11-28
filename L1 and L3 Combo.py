@@ -3581,23 +3581,16 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     except:
         all_grids = [grid_id]
 
-    col1, col2 = st.columns([3, 1])
-
-    with col2:
-        # Button with on_click callback - triggers BEFORE page reloads
-        st.button("Load King Ranch", key="ps_load_kr", on_click=load_king_ranch_callback)
-
-    with col1:
-        default_grids = st.session_state.get('ps_grids', [grid_id])
-        # Ensure default_grids only contains valid options
-        default_grids = [g for g in default_grids if g in all_grids]
-        selected_grids = st.multiselect(
-            "Select Grids for Portfolio",
-            options=all_grids,
-            default=default_grids,
-            max_selections=20,
-            key="ps_grids"
-        )
+    default_grids = st.session_state.get('ps_grids', [grid_id])
+    # Ensure default_grids only contains valid options
+    default_grids = [g for g in default_grids if g in all_grids]
+    selected_grids = st.multiselect(
+        "Select Grids for Portfolio",
+        options=all_grids,
+        default=default_grids,
+        max_selections=20,
+        key="ps_grids"
+    )
 
     if not selected_grids:
         st.warning("Select at least one grid to continue.")
