@@ -1652,7 +1652,7 @@ def run_weather_mvo_optimization(
                     interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
                     total_prem = round_half_up(interval_protection * premium_rate, 0)
                     prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                    producer_premium = total_prem - prem_subsidy
+                    producer_premium = int(total_prem - prem_subsidy)
 
                     trigger = coverage_level * 100
                     shortfall = max(0, (trigger - index_value) / trigger)
@@ -1663,8 +1663,7 @@ def run_weather_mvo_optimization(
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Premium rounding (indemnity is already exact integer sum)
-                year_premium = int(round_half_up(year_premium, 0))
+                # Both indemnity and premium are already exact integer sums
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -1817,7 +1816,7 @@ def calculate_yearly_roi_for_grid(
             interval_protection = round_half_up(total_protection * pct, 0)
             total_premium = round_half_up(interval_protection * premium_rate, 0)
             premium_subsidy = round_half_up(total_premium * subsidy, 0)
-            producer_premium = total_premium - premium_subsidy
+            producer_premium = int(total_premium - premium_subsidy)
 
             trigger = coverage_level * 100
             shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -1828,8 +1827,7 @@ def calculate_yearly_roi_for_grid(
             total_indemnity += indemnity
             total_producer_premium += producer_premium
 
-        # Premium rounding (indemnity is already exact integer sum)
-        total_producer_premium = int(round_half_up(total_producer_premium, 0))
+        # Both indemnity and premium are already exact integer sums
 
         roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
 
@@ -1898,7 +1896,7 @@ def calculate_annual_premium_cost(
                 interval_protection = round_half_up(total_protection * pct, 0)
                 total_premium = round_half_up(interval_protection * premium_rate, 0)
                 premium_subsidy = round_half_up(total_premium * subsidy, 0)
-                producer_premium = total_premium - premium_subsidy
+                producer_premium = int(total_premium - premium_subsidy)
                 grid_premium += producer_premium
 
             grid_breakdown[gid] = grid_premium
@@ -2347,10 +2345,10 @@ def generate_strategy_report_docx(
 
     # --- Helper function to add allocation table ---
     def add_allocation_table(doc, title, results_data, results_key):
-        """Add an allocation table for a strategy. Returns coverage_count."""
+        """Add an allocation table for a strategy. Returns (coverage_count, dropped_grids)."""
         if results_key not in st.session_state or not st.session_state[results_key]:
             doc.add_heading(f'{title} - No data available', level=1)
-            return 0
+            return 0, []
 
         data = st.session_state[results_key]
         allocations = data.get('allocations', {})
@@ -2359,7 +2357,15 @@ def generate_strategy_report_docx(
 
         if not grids:
             doc.add_heading(f'{title} - No grids', level=1)
-            return 0
+            return 0, []
+
+        # Filter to only grids with acres > 0
+        active_grids = [gid for gid in grids if acres.get(gid, 0) > 0]
+        dropped_grids = [gid for gid in grids if acres.get(gid, 0) <= 0]
+
+        if not active_grids:
+            doc.add_heading(f'{title} - All grids have 0 acres', level=1)
+            return 0, dropped_grids
 
         doc.add_heading(title, level=1)
 
@@ -2378,9 +2384,9 @@ def generate_strategy_report_docx(
                     run.bold = True
                     run.font.size = Pt(8)
 
-        # Data rows
+        # Data rows - only include active grids (acres > 0)
         total_acres = 0
-        for gid in grids:
+        for gid in active_grids:
             row_cells = table.add_row().cells
             row_cells[0].text = str(gid)
             alloc = allocations.get(gid, {})
@@ -2411,11 +2417,11 @@ def generate_strategy_report_docx(
             for run in paragraph.runs:
                 run.bold = True
 
-        # Check each interval for coverage
+        # Check each interval for coverage (only considering active grids)
         coverage_count = 0
         for idx, interval in enumerate(INTERVAL_ORDER_11):
             has_coverage = False
-            for gid in grids:
+            for gid in active_grids:
                 alloc = allocations.get(gid, {})
                 grid_acres = acres.get(gid, 0)
                 interval_pct = alloc.get(interval, 0)
@@ -2436,13 +2442,13 @@ def generate_strategy_report_docx(
 
         doc.add_paragraph()
 
-        return coverage_count
+        return coverage_count, dropped_grids
 
     # --- Add allocation tables for each strategy ---
-    champ_coverage = add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
-    chall1_coverage = add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
-    chall2_coverage = add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
-    chall3_coverage = add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
+    champ_coverage, champ_dropped = add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
+    chall1_coverage, chall1_dropped = add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
+    chall2_coverage, chall2_dropped = add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
+    chall3_coverage, chall3_dropped = add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
 
     # --- Footnotes Section ---
     doc.add_heading('Footnotes', level=1)
@@ -2474,6 +2480,23 @@ def generate_strategy_report_docx(
     footnotes.add_run(f"- Challenger 1: {chall1_coverage} of 11 intervals covered\n")
     footnotes.add_run(f"- Challenger 2: {chall2_coverage} of 11 intervals covered\n")
     footnotes.add_run(f"- Challenger 3: {chall3_coverage} of 11 intervals covered\n")
+
+    # Dropped Grids section (0 acres)
+    if any([champ_dropped, chall1_dropped, chall2_dropped, chall3_dropped]):
+        footnotes.add_run("\nDropped Grids (0 acres):\n").bold = True
+
+        if champ_dropped:
+            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in champ_dropped)
+            footnotes.add_run(f"  Champion: {grid_ids}\n")
+        if chall1_dropped:
+            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in chall1_dropped)
+            footnotes.add_run(f"  Challenger 1: {grid_ids}\n")
+        if chall2_dropped:
+            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in chall2_dropped)
+            footnotes.add_run(f"  Challenger 2: {grid_ids}\n")
+        if chall3_dropped:
+            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in chall3_dropped)
+            footnotes.add_run(f"  Challenger 3: {grid_ids}\n")
 
     footnotes.add_run("\nCoverage Level: ").bold = True
     footnotes.add_run(f"{coverage_level:.0%}\n")
@@ -2786,7 +2809,7 @@ def run_portfolio_backtest(
                     interval_protection = round_half_up(total_protection * pct, 0)
                     total_premium = round_half_up(interval_protection * premium_rate, 0)
                     premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                    producer_premium = total_premium - premium_subsidy
+                    producer_premium = int(total_premium - premium_subsidy)
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -2797,8 +2820,7 @@ def run_portfolio_backtest(
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Premium rounding (indemnity is already exact integer sum)
-                year_premium = int(round_half_up(year_premium, 0))
+                # Both indemnity and premium are already exact integer sums
 
                 year_results.append({
                     'year': year,
@@ -2922,7 +2944,7 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     interval_protection = round_half_up(total_protection * pct, 0)
                     total_prem = round_half_up(interval_protection * premium_rate, 0)
                     prem_subsidy = round_half_up(total_prem * subsidy_percent, 0)
-                    producer_premium = total_prem - prem_subsidy
+                    producer_premium = int(total_prem - prem_subsidy)
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -2933,8 +2955,7 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Premium rounding (indemnity is already exact integer sum)
-                year_premium = int(round_half_up(year_premium, 0))
+                # Both indemnity and premium are already exact integer sums
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -4246,7 +4267,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     interval_protection = round_half_up(dollar_protection * 1 * pct, 0)  # 1 acre
                                     total_prem = round_half_up(interval_protection * premium_rate, 0)
                                     prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                                    producer_prem = total_prem - prem_subsidy
+                                    producer_prem = int(total_prem - prem_subsidy)
 
                                     trigger = coverage_level * 100
                                     shortfall = max(0, (trigger - index_value) / trigger)
@@ -4257,8 +4278,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     year_indemnity += indemnity
                                     year_premium += producer_prem
 
-                                # Premium rounding (indemnity is already exact integer sum)
-                                year_premium = int(round_half_up(year_premium, 0))
+                                # Both indemnity and premium are already exact integer sums
 
                                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 base_data_rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -5124,7 +5144,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
                                                         total_prem = round_half_up(interval_protection * premium_rate, 0)
                                                         prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                                                        producer_premium = total_prem - prem_subsidy
+                                                        producer_premium = int(total_prem - prem_subsidy)
 
                                                         trigger = coverage_level * 100
                                                         shortfall = max(0, (trigger - index_value) / trigger)
@@ -5135,8 +5155,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         year_indemnity += indemnity
                                                         year_premium += producer_premium
 
-                                                    # Premium rounding (indemnity is already exact integer sum)
-                                                    year_premium = int(round_half_up(year_premium, 0))
+                                                    # Both indemnity and premium are already exact integer sums
 
                                                     roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                                     analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -5854,7 +5873,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 interval_protection = round_half_up(total_protection * pct, 0)
                                 total_premium = round_half_up(interval_protection * premium_rate, 0)
                                 premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                                producer_premium = total_premium - premium_subsidy
+                                producer_premium = int(total_premium - premium_subsidy)
 
                                 trigger = coverage_level * 100
                                 shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -5865,8 +5884,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 total_indemnity += indemnity
                                 total_producer_premium += producer_premium
 
-                            # Premium rounding (indemnity is already exact integer sum)
-                            total_producer_premium = int(round_half_up(total_producer_premium, 0))
+                            # Both indemnity and premium are already exact integer sums
 
                             net_return = total_indemnity - total_producer_premium
                             roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -5935,7 +5953,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             interval_protection = round_half_up(total_protection * pct, 0)
                             total_premium = round_half_up(interval_protection * premium_rate, 0)
                             premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                            producer_premium = total_premium - premium_subsidy
+                            producer_premium = int(total_premium - premium_subsidy)
 
                             trigger = coverage_level * 100
                             shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -5946,8 +5964,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             total_indemnity += indemnity
                             total_producer_premium += producer_premium
 
-                        # Premium rounding (indemnity is already exact integer sum)
-                        total_producer_premium = int(round_half_up(total_producer_premium, 0))
+                        # Both indemnity and premium are already exact integer sums
 
                         net_return = total_indemnity - total_producer_premium
                         roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -6814,7 +6831,7 @@ def run_optimization_s4(
                 interval_protection = round_half_up(total_protection * pct, 0)
                 total_premium = round_half_up(interval_protection * premium_rate, 0)
                 premium_subsidy = round_half_up(total_premium * subsidy, 0)
-                producer_premium = total_premium - premium_subsidy
+                producer_premium = int(total_premium - premium_subsidy)
 
                 trigger = coverage_level * 100
                 shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -6825,8 +6842,7 @@ def run_optimization_s4(
                 total_indemnity += indemnity
                 total_producer_premium += producer_premium
 
-            # Premium rounding (indemnity is already exact integer sum)
-            total_producer_premium = int(round_half_up(total_producer_premium, 0))
+            # Both indemnity and premium are already exact integer sums
 
             year_roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
             year_rois.append(year_roi)
