@@ -3474,8 +3474,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 st.session_state[f"ps_champ_{gid}_preset_allocation"] = alloc_decimal
 
             st.session_state.ps_kr_load_requested = False
-            st.success("King Ranch preset loaded! (8 grids, 135% productivity, 75% coverage)")
-            st.rerun()  # Force UI refresh to pick up new session state values
+            st.toast("King Ranch preset loaded! (8 grids, 135% productivity, 75% coverage)")
 
         except Exception as e:
             st.error(f"Error loading King Ranch: {e}")
@@ -3522,8 +3521,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 st.session_state[f"ps_champ_{gid}_preset_allocation"] = alloc_decimal
 
             st.session_state.sidebar_kr_champion_requested = False
-            st.success("King Ranch Champion loaded! (8 grids, 135% productivity, 75% coverage)")
-            st.rerun()  # Force UI refresh to pick up new session state values
+            st.toast("King Ranch Champion loaded! (8 grids, 135% productivity, 75% coverage)")
 
         except Exception as e:
             st.error(f"Error loading King Ranch Champion: {e}")
@@ -3572,8 +3570,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 st.session_state[f"ps_incr_acres_{gid}"] = KING_RANCH_INCREMENTAL_PRESET['acres'].get(numeric_id, 40000)
 
             st.session_state.sidebar_kr_incrementals_requested = False
-            st.success(f"King Ranch Incrementals loaded! ({len(preset_incremental_grid_ids)} preset grids added, {len(existing_incremental_grids)} total incremental grids)")
-            st.rerun()  # Force UI refresh to pick up new session state values
+            st.toast(f"King Ranch Incrementals loaded! ({len(preset_incremental_grid_ids)} grids added)")
 
         except Exception as e:
             st.error(f"Error loading King Ranch Incrementals: {e}")
@@ -3592,13 +3589,19 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     except:
         all_grids = [grid_id]
 
-    default_grids = st.session_state.get('ps_grids', [grid_id])
-    # Ensure default_grids only contains valid options
-    default_grids = [g for g in default_grids if g in all_grids]
+    # Initialize session state for ps_grids if not set (first load only)
+    # Filter to valid options to handle any stale data
+    if 'ps_grids' not in st.session_state:
+        st.session_state.ps_grids = [grid_id] if grid_id in all_grids else []
+    else:
+        # Filter out any invalid grids from session state
+        valid_grids = [g for g in st.session_state.ps_grids if g in all_grids]
+        if valid_grids != st.session_state.ps_grids:
+            st.session_state.ps_grids = valid_grids
+
     selected_grids = st.multiselect(
-        "Select Grids for Portfolio",
+        "Select Grids for Portfolio (Champion)",
         options=all_grids,
-        default=default_grids,
         max_selections=20,
         key="ps_grids"
     )
@@ -3809,14 +3812,19 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
     # Incremental grids: all_grids EXCLUDING the Champion's selected_grids
     available_incremental_grids = [g for g in all_grids if g not in selected_grids]
 
-    # Get default incremental grids from session state
-    default_incremental = st.session_state.get('ps_incremental_grids', [])
-    default_incremental = [g for g in default_incremental if g in available_incremental_grids]
+    # Initialize/validate session state for incremental grids
+    # Filter to only include grids that are available (not in Champion selection)
+    if 'ps_incremental_grids' not in st.session_state:
+        st.session_state.ps_incremental_grids = []
+    else:
+        # Filter out any grids that are no longer available (e.g., now in Champion)
+        valid_incrementals = [g for g in st.session_state.ps_incremental_grids if g in available_incremental_grids]
+        if valid_incrementals != st.session_state.ps_incremental_grids:
+            st.session_state.ps_incremental_grids = valid_incrementals
 
     incremental_grids = st.multiselect(
         "Add Incremental Grids to Challenger",
         options=available_incremental_grids,
-        default=default_incremental,
         max_selections=12,
         help="Select additional grids to expand beyond the Champion's base portfolio. The optimizer will find the best allocations for all grids.",
         key="ps_incremental_grids"
