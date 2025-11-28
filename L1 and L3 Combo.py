@@ -3541,27 +3541,36 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 for gid_num in grid_ids:
                     target_grid_mapping[gid_num] = f"{gid_num} ({county} - TX)"
 
-            # Match grids
-            incremental_grid_ids = []
+            # Match grids from preset
+            preset_incremental_grid_ids = []
             for numeric_id in KING_RANCH_INCREMENTAL_PRESET['grids']:
                 target_str = target_grid_mapping.get(numeric_id, "")
                 if target_str in all_grids_for_loading:
-                    incremental_grid_ids.append(target_str)
+                    preset_incremental_grid_ids.append(target_str)
                 else:
                     for grid_option in all_grids_for_loading:
                         if extract_numeric_grid_id(grid_option) == numeric_id:
-                            incremental_grid_ids.append(grid_option)
+                            preset_incremental_grid_ids.append(grid_option)
                             break
 
-            # Set incremental grids in session state
-            st.session_state.ps_incremental_grids = incremental_grid_ids
+            # MERGE with existing incremental grids (don't replace!)
+            # Get existing grids and acres
+            existing_incremental_grids = list(st.session_state.get('ps_incremental_grids', []))
 
-            # Set acres for each incremental grid
-            for gid in incremental_grid_ids:
+            # Add preset grids (skip duplicates)
+            for grid in preset_incremental_grid_ids:
+                if grid not in existing_incremental_grids:
+                    existing_incremental_grids.append(grid)
+
+            # Set merged incremental grids in session state
+            st.session_state.ps_incremental_grids = existing_incremental_grids
+
+            # Set acres for each incremental grid from preset (merge with existing)
+            for gid in preset_incremental_grid_ids:
                 numeric_id = extract_numeric_grid_id(gid)
                 st.session_state[f"ps_incr_acres_{gid}"] = KING_RANCH_INCREMENTAL_PRESET['acres'].get(numeric_id, 40000)
 
-            st.success(f"King Ranch Incrementals loaded! ({len(incremental_grid_ids)} grids)")
+            st.success(f"King Ranch Incrementals loaded! ({len(preset_incremental_grid_ids)} preset grids added, {len(existing_incremental_grids)} total incremental grids)")
 
         except Exception as e:
             st.error(f"Error loading King Ranch Incrementals: {e}")
