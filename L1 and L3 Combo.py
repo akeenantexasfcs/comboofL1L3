@@ -2986,11 +2986,17 @@ def create_optimized_allocation_table(allocations_dict, grid_list, grid_acres=No
     Returns:
         Tuple of (styled DataFrame, raw DataFrame)
     """
+    # Filter to only grids with acres > 0
+    if grid_acres:
+        active_grids = [gid for gid in grid_list if grid_acres.get(gid, 0) > 0]
+    else:
+        active_grids = grid_list
+
     rows = []
     total_coverage = {interval: 0 for interval in INTERVAL_ORDER_11}
     total_acres = 0
 
-    for gid in grid_list:
+    for gid in active_grids:
         alloc = allocations_dict.get(gid, {})
         row = {'Grid': gid}
         row_sum = 0
@@ -3018,7 +3024,7 @@ def create_optimized_allocation_table(allocations_dict, grid_list, grid_acres=No
     # Add summary row (OPTIMIZED AVERAGE or PORTFOLIO AVERAGE)
     avg_row = {'Grid': label}
     avg_row_sum = 0
-    grid_count = len(grid_list)
+    grid_count = len(active_grids)
 
     for interval in INTERVAL_ORDER_11:
         avg_pct = total_coverage[interval] / grid_count if grid_count > 0 else 0
@@ -3067,12 +3073,18 @@ def create_change_analysis_table(champ_alloc, chall_alloc, champ_acres, chall_ac
     Returns:
         Styled pandas DataFrame with allocation and acreage changes
     """
+    # Filter out grids with 0 acres in BOTH portfolios
+    active_grids = [
+        gid for gid in grid_list
+        if champ_acres.get(gid, 0) > 0 or chall_acres.get(gid, 0) > 0
+    ]
+
     rows = []
     total_changes = {interval: 0 for interval in INTERVAL_ORDER_11}
     total_champ_acres = 0
     total_chall_acres = 0
 
-    for gid in grid_list:
+    for gid in active_grids:
         c_alloc = champ_alloc.get(gid, {})
         ch_alloc = chall_alloc.get(gid, {})
         row = {'Grid': gid}
@@ -3151,7 +3163,7 @@ def create_change_analysis_table(champ_alloc, chall_alloc, champ_acres, chall_ac
 
     # Add PORTFOLIO TOTALS row (average allocation changes, total acres)
     totals_row = {'Grid': 'PORTFOLIO TOTALS'}
-    grid_count = len(grid_list)
+    grid_count = len(active_grids)
 
     for interval in INTERVAL_ORDER_11:
         avg_change = total_changes[interval] / grid_count if grid_count > 0 else 0
@@ -3352,12 +3364,18 @@ def render_allocation_text_table(allocations_dict, grid_list, grid_acres=None, l
         grid_acres: Optional dict of grid_id -> acres
         label: Label for the summary row
     """
+    # Filter to only grids with acres > 0
+    if grid_acres:
+        active_grids = [gid for gid in grid_list if grid_acres.get(gid, 0) > 0]
+    else:
+        active_grids = grid_list
+
     # Build data rows
     rows = []
     total_coverage = {interval: 0 for interval in INTERVAL_ORDER_11}
     total_acres = 0
 
-    for gid in grid_list:
+    for gid in active_grids:
         alloc = allocations_dict.get(gid, {})
         row = {'Grid': str(gid)[:20]}  # Truncate long grid names
         row_sum = 0
@@ -3376,7 +3394,7 @@ def render_allocation_text_table(allocations_dict, grid_list, grid_acres=None, l
         rows.append(row)
 
     # Summary row
-    grid_count = len(grid_list)
+    grid_count = len(active_grids)
     avg_row = {'Grid': label}
     avg_sum = 0
     for interval in INTERVAL_ORDER_11:
