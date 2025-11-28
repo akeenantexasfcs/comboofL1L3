@@ -3541,27 +3541,36 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 for gid_num in grid_ids:
                     target_grid_mapping[gid_num] = f"{gid_num} ({county} - TX)"
 
-            # Match grids
-            incremental_grid_ids = []
+            # Match grids from preset
+            preset_incremental_grid_ids = []
             for numeric_id in KING_RANCH_INCREMENTAL_PRESET['grids']:
                 target_str = target_grid_mapping.get(numeric_id, "")
                 if target_str in all_grids_for_loading:
-                    incremental_grid_ids.append(target_str)
+                    preset_incremental_grid_ids.append(target_str)
                 else:
                     for grid_option in all_grids_for_loading:
                         if extract_numeric_grid_id(grid_option) == numeric_id:
-                            incremental_grid_ids.append(grid_option)
+                            preset_incremental_grid_ids.append(grid_option)
                             break
 
-            # Set incremental grids in session state
-            st.session_state.ps_incremental_grids = incremental_grid_ids
+            # MERGE with existing incremental grids (don't replace!)
+            # Get existing grids and acres
+            existing_incremental_grids = list(st.session_state.get('ps_incremental_grids', []))
 
-            # Set acres for each incremental grid
-            for gid in incremental_grid_ids:
+            # Add preset grids (skip duplicates)
+            for grid in preset_incremental_grid_ids:
+                if grid not in existing_incremental_grids:
+                    existing_incremental_grids.append(grid)
+
+            # Set merged incremental grids in session state
+            st.session_state.ps_incremental_grids = existing_incremental_grids
+
+            # Set acres for each incremental grid from preset (merge with existing)
+            for gid in preset_incremental_grid_ids:
                 numeric_id = extract_numeric_grid_id(gid)
                 st.session_state[f"ps_incr_acres_{gid}"] = KING_RANCH_INCREMENTAL_PRESET['acres'].get(numeric_id, 40000)
 
-            st.success(f"King Ranch Incrementals loaded! ({len(incremental_grid_ids)} grids)")
+            st.success(f"King Ranch Incrementals loaded! ({len(preset_incremental_grid_ids)} preset grids added, {len(existing_incremental_grids)} total incremental grids)")
 
         except Exception as e:
             st.error(f"Error loading King Ranch Incrementals: {e}")
@@ -4412,27 +4421,68 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             )
 
             if weather_grids:
+                # PRE-POPULATE acres in session state from Challenger/Champion results
+                # This must happen BEFORE the number_input widgets render
+                # Only set if the key doesn't exist yet (first time) or if we detect a source change
+
+                # Determine the best source for acres
+                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                    source_acres = st.session_state.challenger_results.get('acres', {})
+                    source_grids = st.session_state.challenger_results.get('grids', [])
+                elif 'champion_results' in st.session_state and st.session_state.champion_results:
+                    source_acres = st.session_state.champion_results.get('acres', {})
+                    source_grids = st.session_state.champion_results.get('grids', [])
+                else:
+                    source_acres = {}
+                    source_grids = []
+
+                # Pre-populate session state for each weather grid
+                for gid in weather_grids:
+                    key = f"ps_weather_acres_{gid}"
+                    # Only set if key doesn't exist yet
+                    if key not in st.session_state:
+                        # Try to get acres from source, fall back to reasonable default
+                        if gid in source_acres:
+                            st.session_state[key] = int(source_acres[gid])
+                        else:
+                            # Grid might be new - check if numeric ID matches
+                            numeric_id = extract_numeric_grid_id(gid)
+                            found_acres = None
+                            for source_gid, acres in source_acres.items():
+                                if extract_numeric_grid_id(source_gid) == numeric_id:
+                                    found_acres = int(acres)
+                                    break
+                            st.session_state[key] = found_acres if found_acres else (total_insured_acres // len(weather_grids))
+
                 # --- Acres per Grid ---
                 st.markdown("**Acres per Grid (Starting Population)**")
                 st.caption("Set acres for each grid. MVO optimization may adjust these.")
+
+                # Add sync button to refresh acres from Challenger
+                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                    if st.button("🔄 Sync Acres from Challenger", key="ps_sync_weather_acres"):
+                        challenger_acres = st.session_state.challenger_results.get('acres', {})
+                        for gid in weather_grids:
+                            key = f"ps_weather_acres_{gid}"
+                            if gid in challenger_acres:
+                                st.session_state[key] = int(challenger_acres[gid])
+                            else:
+                                numeric_id = extract_numeric_grid_id(gid)
+                                for c_gid, acres in challenger_acres.items():
+                                    if extract_numeric_grid_id(c_gid) == numeric_id:
+                                        st.session_state[key] = int(acres)
+                                        break
+                        st.rerun()
 
                 weather_acres = {}
                 acre_cols = st.columns(min(4, len(weather_grids)))
                 for idx, gid in enumerate(weather_grids):
                     with acre_cols[idx % 4]:
-                        # Default to Challenger acres if available, else Champion acres, else sidebar default
-                        if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                            challenger_acres_map = st.session_state.challenger_results.get('acres', {})
-                            champ_acres_map = st.session_state.champion_results.get('acres', {})
-                            # Prefer Challenger acres, fall back to Champion acres
-                            default_acres = challenger_acres_map.get(gid, champ_acres_map.get(gid, total_insured_acres // len(weather_grids)))
-                        else:
-                            champ_acres_map = st.session_state.champion_results.get('acres', {})
-                            default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                        # Session state was pre-populated above, so this will use those values
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
-                            value=max(1, int(default_acres)),
+                            value=st.session_state.get(f"ps_weather_acres_{gid}", 10000),
                             step=10,
                             key=f"ps_weather_acres_{gid}"
                         )
