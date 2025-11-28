@@ -4439,7 +4439,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
-                            value=int(default_acres),
+                            value=max(1, int(default_acres)),
                             step=10,
                             key=f"ps_weather_acres_{gid}"
                         )
