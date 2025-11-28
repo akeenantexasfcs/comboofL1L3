@@ -1652,7 +1652,7 @@ def run_weather_mvo_optimization(
                     interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
                     total_prem = round_half_up(interval_protection * premium_rate, 0)
                     prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                    producer_premium = total_prem - prem_subsidy
+                    producer_premium = int(total_prem - prem_subsidy)
 
                     trigger = coverage_level * 100
                     shortfall = max(0, (trigger - index_value) / trigger)
@@ -1663,8 +1663,7 @@ def run_weather_mvo_optimization(
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Premium rounding (indemnity is already exact integer sum)
-                year_premium = int(round_half_up(year_premium, 0))
+                # Both indemnity and premium are already exact integer sums
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -1817,7 +1816,7 @@ def calculate_yearly_roi_for_grid(
             interval_protection = round_half_up(total_protection * pct, 0)
             total_premium = round_half_up(interval_protection * premium_rate, 0)
             premium_subsidy = round_half_up(total_premium * subsidy, 0)
-            producer_premium = total_premium - premium_subsidy
+            producer_premium = int(total_premium - premium_subsidy)
 
             trigger = coverage_level * 100
             shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -1828,8 +1827,7 @@ def calculate_yearly_roi_for_grid(
             total_indemnity += indemnity
             total_producer_premium += producer_premium
 
-        # Premium rounding (indemnity is already exact integer sum)
-        total_producer_premium = int(round_half_up(total_producer_premium, 0))
+        # Both indemnity and premium are already exact integer sums
 
         roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
 
@@ -1898,7 +1896,7 @@ def calculate_annual_premium_cost(
                 interval_protection = round_half_up(total_protection * pct, 0)
                 total_premium = round_half_up(interval_protection * premium_rate, 0)
                 premium_subsidy = round_half_up(total_premium * subsidy, 0)
-                producer_premium = total_premium - premium_subsidy
+                producer_premium = int(total_premium - premium_subsidy)
                 grid_premium += producer_premium
 
             grid_breakdown[gid] = grid_premium
@@ -2811,7 +2809,7 @@ def run_portfolio_backtest(
                     interval_protection = round_half_up(total_protection * pct, 0)
                     total_premium = round_half_up(interval_protection * premium_rate, 0)
                     premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                    producer_premium = total_premium - premium_subsidy
+                    producer_premium = int(total_premium - premium_subsidy)
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -2822,8 +2820,7 @@ def run_portfolio_backtest(
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Premium rounding (indemnity is already exact integer sum)
-                year_premium = int(round_half_up(year_premium, 0))
+                # Both indemnity and premium are already exact integer sums
 
                 year_results.append({
                     'year': year,
@@ -2947,7 +2944,7 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     interval_protection = round_half_up(total_protection * pct, 0)
                     total_prem = round_half_up(interval_protection * premium_rate, 0)
                     prem_subsidy = round_half_up(total_prem * subsidy_percent, 0)
-                    producer_premium = total_prem - prem_subsidy
+                    producer_premium = int(total_prem - prem_subsidy)
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -2958,8 +2955,7 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     year_indemnity += indemnity
                     year_premium += producer_premium
 
-                # Premium rounding (indemnity is already exact integer sum)
-                year_premium = int(round_half_up(year_premium, 0))
+                # Both indemnity and premium are already exact integer sums
 
                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                 rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -4271,7 +4267,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     interval_protection = round_half_up(dollar_protection * 1 * pct, 0)  # 1 acre
                                     total_prem = round_half_up(interval_protection * premium_rate, 0)
                                     prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                                    producer_prem = total_prem - prem_subsidy
+                                    producer_prem = int(total_prem - prem_subsidy)
 
                                     trigger = coverage_level * 100
                                     shortfall = max(0, (trigger - index_value) / trigger)
@@ -4282,8 +4278,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     year_indemnity += indemnity
                                     year_premium += producer_prem
 
-                                # Premium rounding (indemnity is already exact integer sum)
-                                year_premium = int(round_half_up(year_premium, 0))
+                                # Both indemnity and premium are already exact integer sums
 
                                 roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                 base_data_rows.append({'year': year, 'grid': gid, 'roi': roi})
@@ -5149,7 +5144,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
                                                         total_prem = round_half_up(interval_protection * premium_rate, 0)
                                                         prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                                                        producer_premium = total_prem - prem_subsidy
+                                                        producer_premium = int(total_prem - prem_subsidy)
 
                                                         trigger = coverage_level * 100
                                                         shortfall = max(0, (trigger - index_value) / trigger)
@@ -5160,8 +5155,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         year_indemnity += indemnity
                                                         year_premium += producer_premium
 
-                                                    # Premium rounding (indemnity is already exact integer sum)
-                                                    year_premium = int(round_half_up(year_premium, 0))
+                                                    # Both indemnity and premium are already exact integer sums
 
                                                     roi = (year_indemnity - year_premium) / year_premium if year_premium > 0 else 0
                                                     analog_roi_data.append({'year': year, 'grid': gid, 'roi': roi})
@@ -5879,7 +5873,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 interval_protection = round_half_up(total_protection * pct, 0)
                                 total_premium = round_half_up(interval_protection * premium_rate, 0)
                                 premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                                producer_premium = total_premium - premium_subsidy
+                                producer_premium = int(total_premium - premium_subsidy)
 
                                 trigger = coverage_level * 100
                                 shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -5890,8 +5884,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 total_indemnity += indemnity
                                 total_producer_premium += producer_premium
 
-                            # Premium rounding (indemnity is already exact integer sum)
-                            total_producer_premium = int(round_half_up(total_producer_premium, 0))
+                            # Both indemnity and premium are already exact integer sums
 
                             net_return = total_indemnity - total_producer_premium
                             roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -5960,7 +5953,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             interval_protection = round_half_up(total_protection * pct, 0)
                             total_premium = round_half_up(interval_protection * premium_rate, 0)
                             premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                            producer_premium = total_premium - premium_subsidy
+                            producer_premium = int(total_premium - premium_subsidy)
 
                             trigger = coverage_level * 100
                             shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -5971,8 +5964,7 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             total_indemnity += indemnity
                             total_producer_premium += producer_premium
 
-                        # Premium rounding (indemnity is already exact integer sum)
-                        total_producer_premium = int(round_half_up(total_producer_premium, 0))
+                        # Both indemnity and premium are already exact integer sums
 
                         net_return = total_indemnity - total_producer_premium
                         roi = net_return / total_producer_premium if total_producer_premium > 0 else 0
@@ -6839,7 +6831,7 @@ def run_optimization_s4(
                 interval_protection = round_half_up(total_protection * pct, 0)
                 total_premium = round_half_up(interval_protection * premium_rate, 0)
                 premium_subsidy = round_half_up(total_premium * subsidy, 0)
-                producer_premium = total_premium - premium_subsidy
+                producer_premium = int(total_premium - premium_subsidy)
 
                 trigger = coverage_level * 100
                 shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -6850,8 +6842,7 @@ def run_optimization_s4(
                 total_indemnity += indemnity
                 total_producer_premium += producer_premium
 
-            # Premium rounding (indemnity is already exact integer sum)
-            total_producer_premium = int(round_half_up(total_producer_premium, 0))
+            # Both indemnity and premium are already exact integer sums
 
             year_roi = (total_indemnity - total_producer_premium) / total_producer_premium if total_producer_premium > 0 else 0
             year_rois.append(year_roi)
