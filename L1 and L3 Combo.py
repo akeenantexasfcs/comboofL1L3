@@ -4425,13 +4425,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         if enable_weather_challengers:
             # --- Grid Selection for Weather Portfolio ---
             st.markdown("**Step 2.1: Select Grids for Weather Portfolio**")
-            st.caption("Weather portfolio can use different grids than Champion. Default is Challenger's grids (Champion + Incrementals).")
+            st.caption("Weather portfolio can use different grids than Champion. Default is Champion grids + Incremental grids with original user-specified acres.")
 
-            # Default to Challenger's grids (Champion + Incrementals) if available, else Champion's grids
-            if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                default_weather_grids = st.session_state.challenger_results.get('grids', [])
-            else:
-                default_weather_grids = st.session_state.champion_results.get('grids', [])
+            # Default to Champion grids + Incremental grids (using original inputs, not MVO results)
+            default_weather_grids = list(selected_grids) + list(st.session_state.get('ps_incremental_grids', []))
 
             # Filter to only valid options
             default_weather_grids = [g for g in default_weather_grids if g in all_grids]
@@ -4445,20 +4442,12 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             )
 
             if weather_grids:
-                # PRE-POPULATE acres in session state from Challenger/Champion results
+                # PRE-POPULATE acres in session state from ORIGINAL user inputs (not MVO results)
                 # This must happen BEFORE the number_input widgets render
-                # Only set if the key doesn't exist yet (first time) or if we detect a source change
+                # Only set if the key doesn't exist yet (first time)
 
-                # Determine the best source for acres
-                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                    source_acres = st.session_state.challenger_results.get('acres', {})
-                    source_grids = st.session_state.challenger_results.get('grids', [])
-                elif 'champion_results' in st.session_state and st.session_state.champion_results:
-                    source_acres = st.session_state.champion_results.get('acres', {})
-                    source_grids = st.session_state.champion_results.get('grids', [])
-                else:
-                    source_acres = {}
-                    source_grids = []
+                # Get the incremental grids for source determination
+                incremental_grids = st.session_state.get('ps_incremental_grids', [])
 
                 # Pre-populate session state for each weather grid
                 # Calculate default acres for fallback (distributed evenly across grids)
@@ -4468,42 +4457,40 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                     key = f"ps_weather_acres_{gid}"
                     # Only set if key doesn't exist yet
                     if key not in st.session_state:
-                        # Try to get acres from source, fall back to reasonable default
-                        # Use get_safe_acres to handle MVO-optimized 0 values
-                        if gid in source_acres:
-                            st.session_state[key] = get_safe_acres(source_acres, gid, default_per_grid)
+                        # Use ORIGINAL inputs, not MVO-optimized results
+                        # For Champion grids, use original Champion acres
+                        if gid in selected_grids:
+                            source_acres = st.session_state.get(f"ps_champ_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
+                        # For Incremental grids, use original incremental acres
+                        elif gid in incremental_grids:
+                            source_acres = st.session_state.get(f"ps_incr_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
                         else:
-                            # Grid might be new - check if numeric ID matches
-                            numeric_id = extract_numeric_grid_id(gid)
-                            found_acres = None
-                            for source_gid, acres in source_acres.items():
-                                if extract_numeric_grid_id(source_gid) == numeric_id:
-                                    # Safeguard: ensure non-zero value
-                                    found_acres = max(1, int(acres)) if acres >= 1 else default_per_grid
-                                    break
-                            st.session_state[key] = found_acres if found_acres else default_per_grid
+                            # Fallback for any other grids
+                            st.session_state[key] = default_per_grid
 
                 # --- Acres per Grid ---
                 st.markdown("**Acres per Grid (Starting Population)**")
                 st.caption("Set acres for each grid. MVO optimization may adjust these.")
 
-                # Add sync button to refresh acres from Challenger
-                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                    if st.button("🔄 Sync Acres from Challenger", key="ps_sync_weather_acres"):
-                        challenger_acres = st.session_state.challenger_results.get('acres', {})
-                        for gid in weather_grids:
-                            key = f"ps_weather_acres_{gid}"
-                            if gid in challenger_acres:
-                                # Safeguard: use get_safe_acres to handle MVO-optimized 0 values
-                                st.session_state[key] = get_safe_acres(challenger_acres, gid, default_per_grid)
-                            else:
-                                numeric_id = extract_numeric_grid_id(gid)
-                                for c_gid, acres in challenger_acres.items():
-                                    if extract_numeric_grid_id(c_gid) == numeric_id:
-                                        # Safeguard: ensure non-zero value
-                                        st.session_state[key] = max(1, int(acres)) if acres >= 1 else default_per_grid
-                                        break
-                        st.rerun()
+                # Add sync button to refresh acres from ORIGINAL inputs (not MVO results)
+                if st.button("🔄 Sync Acres from Original Inputs", key="ps_sync_weather_acres"):
+                    for gid in weather_grids:
+                        key = f"ps_weather_acres_{gid}"
+                        # Use ORIGINAL inputs, not MVO-optimized results
+                        # For Champion grids, use original Champion acres
+                        if gid in selected_grids:
+                            source_acres = st.session_state.get(f"ps_champ_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
+                        # For Incremental grids, use original incremental acres
+                        elif gid in incremental_grids:
+                            source_acres = st.session_state.get(f"ps_incr_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
+                        else:
+                            # Fallback for any other grids
+                            st.session_state[key] = default_per_grid
+                    st.rerun()
 
                 weather_acres = {}
                 acre_cols = st.columns(min(4, len(weather_grids)))
