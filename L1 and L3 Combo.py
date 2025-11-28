@@ -2347,10 +2347,10 @@ def generate_strategy_report_docx(
 
     # --- Helper function to add allocation table ---
     def add_allocation_table(doc, title, results_data, results_key):
-        """Add an allocation table for a strategy."""
+        """Add an allocation table for a strategy. Returns coverage_count."""
         if results_key not in st.session_state or not st.session_state[results_key]:
             doc.add_heading(f'{title} - No data available', level=1)
-            return
+            return 0
 
         data = st.session_state[results_key]
         allocations = data.get('allocations', {})
@@ -2359,7 +2359,7 @@ def generate_strategy_report_docx(
 
         if not grids:
             doc.add_heading(f'{title} - No grids', level=1)
-            return
+            return 0
 
         doc.add_heading(title, level=1)
 
@@ -2404,13 +2404,45 @@ def generate_strategy_report_docx(
             for run in paragraph.runs:
                 run.bold = True
 
+        # Add COVERAGE row
+        coverage_row_cells = table.add_row().cells
+        coverage_row_cells[0].text = "COVERAGE"
+        for paragraph in coverage_row_cells[0].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
+        # Check each interval for coverage
+        coverage_count = 0
+        for idx, interval in enumerate(INTERVAL_ORDER_11):
+            has_coverage = False
+            for gid in grids:
+                alloc = allocations.get(gid, {})
+                grid_acres = acres.get(gid, 0)
+                interval_pct = alloc.get(interval, 0)
+                if grid_acres > 0 and interval_pct > 0:
+                    has_coverage = True
+                    break
+            if has_coverage:
+                coverage_row_cells[idx + 1].text = "X"
+                coverage_count += 1
+            else:
+                coverage_row_cells[idx + 1].text = "--"
+
+        # Show coverage count in Acres column
+        coverage_row_cells[len(INTERVAL_ORDER_11) + 1].text = f"{coverage_count}/11"
+        for paragraph in coverage_row_cells[len(INTERVAL_ORDER_11) + 1].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
         doc.add_paragraph()
 
+        return coverage_count
+
     # --- Add allocation tables for each strategy ---
-    add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
-    add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
-    add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
-    add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
+    champ_coverage = add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
+    chall1_coverage = add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
+    chall2_coverage = add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
+    chall3_coverage = add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
 
     # --- Footnotes Section ---
     doc.add_heading('Footnotes', level=1)
@@ -2436,7 +2468,14 @@ def generate_strategy_report_docx(
         footnotes.add_run("Number of Analog Years: ").bold = True
         footnotes.add_run(f"{analog_years_count}\n")
 
-    footnotes.add_run("Coverage Level: ").bold = True
+    # Coverage Summary
+    footnotes.add_run("\nCoverage Summary:\n").bold = True
+    footnotes.add_run(f"- Champion: {champ_coverage} of 11 intervals covered\n")
+    footnotes.add_run(f"- Challenger 1: {chall1_coverage} of 11 intervals covered\n")
+    footnotes.add_run(f"- Challenger 2: {chall2_coverage} of 11 intervals covered\n")
+    footnotes.add_run(f"- Challenger 3: {chall3_coverage} of 11 intervals covered\n")
+
+    footnotes.add_run("\nCoverage Level: ").bold = True
     footnotes.add_run(f"{coverage_level:.0%}\n")
 
     footnotes.add_run("Productivity Factor: ").bold = True
@@ -5546,7 +5585,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                                 # Get the baseline scenario from session state (what Champion was trained on)
                                 baseline_scenario = st.session_state.get('ps_scenario', 'All Years (except Current Year)')
-                                baseline_label = baseline_scenario.replace(' (except Current Year)', '').replace('ENSO Phase: ', '')
+                                baseline_label = baseline_scenario.replace('ENSO Phase: ', '')
 
                                 comparison_data = {
                                     'Metric': [
