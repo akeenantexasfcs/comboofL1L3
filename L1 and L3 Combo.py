@@ -2481,22 +2481,28 @@ def generate_strategy_report_docx(
     footnotes.add_run(f"- Challenger 2: {chall2_coverage} of 11 intervals covered\n")
     footnotes.add_run(f"- Challenger 3: {chall3_coverage} of 11 intervals covered\n")
 
-    # Dropped Grids section (0 acres)
-    if any([champ_dropped, chall1_dropped, chall2_dropped, chall3_dropped]):
-        footnotes.add_run("\nDropped Grids (0 acres):\n").bold = True
+    # Dropped Grids section (0 acres) - always show all strategies
+    footnotes.add_run("\nDropped Grids (0 acres):\n").bold = True
 
-        if champ_dropped:
-            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in champ_dropped)
-            footnotes.add_run(f"  Champion: {grid_ids}\n")
-        if chall1_dropped:
-            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in chall1_dropped)
-            footnotes.add_run(f"  Challenger 1: {grid_ids}\n")
-        if chall2_dropped:
-            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in chall2_dropped)
-            footnotes.add_run(f"  Challenger 2: {grid_ids}\n")
-        if chall3_dropped:
-            grid_ids = ', '.join(str(extract_numeric_grid_id(g)) for g in chall3_dropped)
-            footnotes.add_run(f"  Challenger 3: {grid_ids}\n")
+    def format_dropped_grids(dropped_list):
+        """Format dropped grid list for footnotes with county info."""
+        if not dropped_list:
+            return "None"
+        # Format each grid with its county info
+        formatted = []
+        for g in dropped_list:
+            numeric_id = extract_numeric_grid_id(g)
+            county = extract_county_from_grid_id(g)
+            if county:
+                formatted.append(f"{numeric_id} ({county} - TX)")
+            else:
+                formatted.append(str(numeric_id))
+        return ', '.join(formatted)
+
+    footnotes.add_run(f"  - Champion: {format_dropped_grids(champ_dropped)}\n")
+    footnotes.add_run(f"  - Challenger 1: {format_dropped_grids(chall1_dropped)}\n")
+    footnotes.add_run(f"  - Challenger 2: {format_dropped_grids(chall2_dropped)}\n")
+    footnotes.add_run(f"  - Challenger 3: {format_dropped_grids(chall3_dropped)}\n")
 
     footnotes.add_run("\nCoverage Level: ").bold = True
     footnotes.add_run(f"{coverage_level:.0%}\n")
