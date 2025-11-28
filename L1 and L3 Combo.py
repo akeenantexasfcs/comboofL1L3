@@ -170,6 +170,28 @@ def extract_county_from_grid_id(grid_id):
         return county_part
     return None
 
+def get_safe_acres(source_acres, gid, default_acres, min_acres=1):
+    """
+    Get acres from source with a minimum floor to prevent 0 values.
+
+    This is needed because MVO optimization may set some grids to 0 acres,
+    but st.number_input with min_value=1 will fail if given value=0.
+
+    Args:
+        source_acres: Dictionary of grid_id -> acres from source portfolio
+        gid: The grid ID to look up
+        default_acres: Default value if grid not found
+        min_acres: Minimum allowed acres (default 1)
+
+    Returns:
+        Integer acres value, guaranteed to be >= min_acres
+    """
+    acres = source_acres.get(gid, default_acres)
+    if acres < min_acres:
+        # If acres is 0 or near-zero, use default instead
+        return max(min_acres, int(default_acres))
+    return int(acres)
+
 st.set_page_config(layout="wide", page_title="PRF Backtesting Tool")
 
 # =============================================================================
@@ -2325,10 +2347,10 @@ def generate_strategy_report_docx(
 
     # --- Helper function to add allocation table ---
     def add_allocation_table(doc, title, results_data, results_key):
-        """Add an allocation table for a strategy."""
+        """Add an allocation table for a strategy. Returns coverage_count."""
         if results_key not in st.session_state or not st.session_state[results_key]:
             doc.add_heading(f'{title} - No data available', level=1)
-            return
+            return 0
 
         data = st.session_state[results_key]
         allocations = data.get('allocations', {})
@@ -2337,7 +2359,7 @@ def generate_strategy_report_docx(
 
         if not grids:
             doc.add_heading(f'{title} - No grids', level=1)
-            return
+            return 0
 
         doc.add_heading(title, level=1)
 
@@ -2382,13 +2404,45 @@ def generate_strategy_report_docx(
             for run in paragraph.runs:
                 run.bold = True
 
+        # Add COVERAGE row
+        coverage_row_cells = table.add_row().cells
+        coverage_row_cells[0].text = "COVERAGE"
+        for paragraph in coverage_row_cells[0].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
+        # Check each interval for coverage
+        coverage_count = 0
+        for idx, interval in enumerate(INTERVAL_ORDER_11):
+            has_coverage = False
+            for gid in grids:
+                alloc = allocations.get(gid, {})
+                grid_acres = acres.get(gid, 0)
+                interval_pct = alloc.get(interval, 0)
+                if grid_acres > 0 and interval_pct > 0:
+                    has_coverage = True
+                    break
+            if has_coverage:
+                coverage_row_cells[idx + 1].text = "X"
+                coverage_count += 1
+            else:
+                coverage_row_cells[idx + 1].text = "--"
+
+        # Show coverage count in Acres column
+        coverage_row_cells[len(INTERVAL_ORDER_11) + 1].text = f"{coverage_count}/11"
+        for paragraph in coverage_row_cells[len(INTERVAL_ORDER_11) + 1].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+
         doc.add_paragraph()
 
+        return coverage_count
+
     # --- Add allocation tables for each strategy ---
-    add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
-    add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
-    add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
-    add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
+    champ_coverage = add_allocation_table(doc, 'Champion Allocation', st.session_state, 'champion_results')
+    chall1_coverage = add_allocation_table(doc, 'Challenger 1 Allocation', st.session_state, 'challenger_results')
+    chall2_coverage = add_allocation_table(doc, 'Challenger 2 Allocation', st.session_state, 'weather_challenger_results')
+    chall3_coverage = add_allocation_table(doc, 'Challenger 3 Allocation', st.session_state, 'weather_challenger_3_results')
 
     # --- Footnotes Section ---
     doc.add_heading('Footnotes', level=1)
@@ -2414,7 +2468,14 @@ def generate_strategy_report_docx(
         footnotes.add_run("Number of Analog Years: ").bold = True
         footnotes.add_run(f"{analog_years_count}\n")
 
-    footnotes.add_run("Coverage Level: ").bold = True
+    # Coverage Summary
+    footnotes.add_run("\nCoverage Summary:\n").bold = True
+    footnotes.add_run(f"- Champion: {champ_coverage} of 11 intervals covered\n")
+    footnotes.add_run(f"- Challenger 1: {chall1_coverage} of 11 intervals covered\n")
+    footnotes.add_run(f"- Challenger 2: {chall2_coverage} of 11 intervals covered\n")
+    footnotes.add_run(f"- Challenger 3: {chall3_coverage} of 11 intervals covered\n")
+
+    footnotes.add_run("\nCoverage Level: ").bold = True
     footnotes.add_run(f"{coverage_level:.0%}\n")
 
     footnotes.add_run("Productivity Factor: ").bold = True
@@ -4403,13 +4464,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         if enable_weather_challengers:
             # --- Grid Selection for Weather Portfolio ---
             st.markdown("**Step 2.1: Select Grids for Weather Portfolio**")
-            st.caption("Weather portfolio can use different grids than Champion. Default is Challenger's grids (Champion + Incrementals).")
+            st.caption("Weather portfolio can use different grids than Champion. Default is Champion grids + Incremental grids with original user-specified acres.")
 
-            # Default to Challenger's grids (Champion + Incrementals) if available, else Champion's grids
-            if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                default_weather_grids = st.session_state.challenger_results.get('grids', [])
-            else:
-                default_weather_grids = st.session_state.champion_results.get('grids', [])
+            # Default to Champion grids + Incremental grids (using original inputs, not MVO results)
+            default_weather_grids = list(selected_grids) + list(st.session_state.get('ps_incremental_grids', []))
 
             # Filter to only valid options
             default_weather_grids = [g for g in default_weather_grids if g in all_grids]
@@ -4423,68 +4481,66 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             )
 
             if weather_grids:
-                # PRE-POPULATE acres in session state from Challenger/Champion results
+                # PRE-POPULATE acres in session state from ORIGINAL user inputs (not MVO results)
                 # This must happen BEFORE the number_input widgets render
-                # Only set if the key doesn't exist yet (first time) or if we detect a source change
+                # Only set if the key doesn't exist yet (first time)
 
-                # Determine the best source for acres
-                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                    source_acres = st.session_state.challenger_results.get('acres', {})
-                    source_grids = st.session_state.challenger_results.get('grids', [])
-                elif 'champion_results' in st.session_state and st.session_state.champion_results:
-                    source_acres = st.session_state.champion_results.get('acres', {})
-                    source_grids = st.session_state.champion_results.get('grids', [])
-                else:
-                    source_acres = {}
-                    source_grids = []
+                # Get the incremental grids for source determination
+                incremental_grids = st.session_state.get('ps_incremental_grids', [])
 
                 # Pre-populate session state for each weather grid
+                # Calculate default acres for fallback (distributed evenly across grids)
+                default_per_grid = max(1, total_insured_acres // len(weather_grids))
+
                 for gid in weather_grids:
                     key = f"ps_weather_acres_{gid}"
                     # Only set if key doesn't exist yet
                     if key not in st.session_state:
-                        # Try to get acres from source, fall back to reasonable default
-                        if gid in source_acres:
-                            st.session_state[key] = int(source_acres[gid])
+                        # Use ORIGINAL inputs, not MVO-optimized results
+                        # For Champion grids, use original Champion acres
+                        if gid in selected_grids:
+                            source_acres = st.session_state.get(f"ps_champ_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
+                        # For Incremental grids, use original incremental acres
+                        elif gid in incremental_grids:
+                            source_acres = st.session_state.get(f"ps_incr_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
                         else:
-                            # Grid might be new - check if numeric ID matches
-                            numeric_id = extract_numeric_grid_id(gid)
-                            found_acres = None
-                            for source_gid, acres in source_acres.items():
-                                if extract_numeric_grid_id(source_gid) == numeric_id:
-                                    found_acres = int(acres)
-                                    break
-                            st.session_state[key] = found_acres if found_acres else (total_insured_acres // len(weather_grids))
+                            # Fallback for any other grids
+                            st.session_state[key] = default_per_grid
 
                 # --- Acres per Grid ---
                 st.markdown("**Acres per Grid (Starting Population)**")
                 st.caption("Set acres for each grid. MVO optimization may adjust these.")
 
-                # Add sync button to refresh acres from Challenger
-                if 'challenger_results' in st.session_state and st.session_state.challenger_results:
-                    if st.button("🔄 Sync Acres from Challenger", key="ps_sync_weather_acres"):
-                        challenger_acres = st.session_state.challenger_results.get('acres', {})
-                        for gid in weather_grids:
-                            key = f"ps_weather_acres_{gid}"
-                            if gid in challenger_acres:
-                                st.session_state[key] = int(challenger_acres[gid])
-                            else:
-                                numeric_id = extract_numeric_grid_id(gid)
-                                for c_gid, acres in challenger_acres.items():
-                                    if extract_numeric_grid_id(c_gid) == numeric_id:
-                                        st.session_state[key] = int(acres)
-                                        break
-                        st.rerun()
+                # Add sync button to refresh acres from ORIGINAL inputs (not MVO results)
+                if st.button("🔄 Sync Acres from Original Inputs", key="ps_sync_weather_acres"):
+                    for gid in weather_grids:
+                        key = f"ps_weather_acres_{gid}"
+                        # Use ORIGINAL inputs, not MVO-optimized results
+                        # For Champion grids, use original Champion acres
+                        if gid in selected_grids:
+                            source_acres = st.session_state.get(f"ps_champ_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
+                        # For Incremental grids, use original incremental acres
+                        elif gid in incremental_grids:
+                            source_acres = st.session_state.get(f"ps_incr_acres_{gid}", default_per_grid)
+                            st.session_state[key] = max(1, int(source_acres)) if source_acres >= 1 else default_per_grid
+                        else:
+                            # Fallback for any other grids
+                            st.session_state[key] = default_per_grid
+                    st.rerun()
 
                 weather_acres = {}
                 acre_cols = st.columns(min(4, len(weather_grids)))
                 for idx, gid in enumerate(weather_grids):
                     with acre_cols[idx % 4]:
                         # Session state was pre-populated above, so this will use those values
+                        # Final safeguard: max(1, value) ensures valid input even if session state has 0
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
-                            value=st.session_state.get(f"ps_weather_acres_{gid}", 10000),
+                            value=max(1, st.session_state.get(f"ps_weather_acres_{gid}", 10000)),
                             step=10,
                             key=f"ps_weather_acres_{gid}"
                         )
@@ -5529,7 +5585,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                                 # Get the baseline scenario from session state (what Champion was trained on)
                                 baseline_scenario = st.session_state.get('ps_scenario', 'All Years (except Current Year)')
-                                baseline_label = baseline_scenario.replace(' (except Current Year)', '').replace('ENSO Phase: ', '')
+                                baseline_label = baseline_scenario.replace('ENSO Phase: ', '')
 
                                 comparison_data = {
                                     'Metric': [
