@@ -3473,13 +3473,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 alloc_decimal = {interval: float(alloc.get(interval, 0.0)) / 100.0 for interval in INTERVAL_ORDER_11}
                 st.session_state[f"ps_champ_{gid}_preset_allocation"] = alloc_decimal
 
+            st.session_state.ps_kr_load_requested = False
             st.success("King Ranch preset loaded! (8 grids, 135% productivity, 75% coverage)")
+            st.rerun()  # Force UI refresh to pick up new session state values
 
         except Exception as e:
             st.error(f"Error loading King Ranch: {e}")
-
-        # Reset the flag
-        st.session_state.ps_kr_load_requested = False
+            st.session_state.ps_kr_load_requested = False
 
     # ==========================================================================
     # SIDEBAR: LOAD KING RANCH (CHAMPION) HANDLER
@@ -3521,12 +3521,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 alloc_decimal = {interval: float(alloc.get(interval, 0.0)) / 100.0 for interval in INTERVAL_ORDER_11}
                 st.session_state[f"ps_champ_{gid}_preset_allocation"] = alloc_decimal
 
+            st.session_state.sidebar_kr_champion_requested = False
             st.success("King Ranch Champion loaded! (8 grids, 135% productivity, 75% coverage)")
+            st.rerun()  # Force UI refresh to pick up new session state values
 
         except Exception as e:
             st.error(f"Error loading King Ranch Champion: {e}")
-
-        st.session_state.sidebar_kr_champion_requested = False
+            st.session_state.sidebar_kr_champion_requested = False
 
     # ==========================================================================
     # SIDEBAR: LOAD KING RANCH INCREMENTALS HANDLER
@@ -3570,12 +3571,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 numeric_id = extract_numeric_grid_id(gid)
                 st.session_state[f"ps_incr_acres_{gid}"] = KING_RANCH_INCREMENTAL_PRESET['acres'].get(numeric_id, 40000)
 
+            st.session_state.sidebar_kr_incrementals_requested = False
             st.success(f"King Ranch Incrementals loaded! ({len(preset_incremental_grid_ids)} preset grids added, {len(existing_incremental_grids)} total incremental grids)")
+            st.rerun()  # Force UI refresh to pick up new session state values
 
         except Exception as e:
             st.error(f"Error loading King Ranch Incrementals: {e}")
-
-        st.session_state.sidebar_kr_incrementals_requested = False
+            st.session_state.sidebar_kr_incrementals_requested = False
 
     # ==========================================================================
     # TOP SECTION: GLOBAL SETTINGS
