@@ -4399,15 +4399,21 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         if enable_weather_challengers:
             # --- Grid Selection for Weather Portfolio ---
             st.markdown("**Step 2.1: Select Grids for Weather Portfolio**")
-            st.caption("Weather portfolio can use different grids than Champion. Default is Champion's grids.")
+            st.caption("Weather portfolio can use different grids than Champion. Default is Challenger's grids (Champion + Incrementals).")
 
-            # Default to Champion's grids
-            champ_grids_for_weather = st.session_state.champion_results.get('grids', [])
+            # Default to Challenger's grids (Champion + Incrementals) if available, else Champion's grids
+            if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                default_weather_grids = st.session_state.challenger_results.get('grids', [])
+            else:
+                default_weather_grids = st.session_state.champion_results.get('grids', [])
+
+            # Filter to only valid options
+            default_weather_grids = [g for g in default_weather_grids if g in all_grids]
 
             weather_grids = st.multiselect(
                 "Weather Portfolio Grids",
                 options=all_grids,
-                default=champ_grids_for_weather,
+                default=default_weather_grids,
                 max_selections=20,
                 key="ps_weather_grids"
             )
@@ -4421,9 +4427,15 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                 acre_cols = st.columns(min(4, len(weather_grids)))
                 for idx, gid in enumerate(weather_grids):
                     with acre_cols[idx % 4]:
-                        # Default to Champion acres if available, else use sidebar default
-                        champ_acres_map = st.session_state.champion_results.get('acres', {})
-                        default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
+                        # Default to Challenger acres if available, else Champion acres, else sidebar default
+                        if 'challenger_results' in st.session_state and st.session_state.challenger_results:
+                            challenger_acres_map = st.session_state.challenger_results.get('acres', {})
+                            champ_acres_map = st.session_state.champion_results.get('acres', {})
+                            # Prefer Challenger acres, fall back to Champion acres
+                            default_acres = challenger_acres_map.get(gid, champ_acres_map.get(gid, total_insured_acres // len(weather_grids)))
+                        else:
+                            champ_acres_map = st.session_state.champion_results.get('acres', {})
+                            default_acres = champ_acres_map.get(gid, total_insured_acres // len(weather_grids))
                         weather_acres[gid] = st.number_input(
                             f"{gid}",
                             min_value=1,
