@@ -2354,6 +2354,7 @@ def generate_strategy_report_docx(
         allocations = data.get('allocations', {})
         acres = data.get('acres', {})
         grids = data.get('grids', [])
+        metrics = data.get('metrics', {})
 
         if not grids:
             doc.add_heading(f'{title} - No grids', level=1)
@@ -2368,6 +2369,11 @@ def generate_strategy_report_docx(
             return 0, dropped_grids
 
         doc.add_heading(title, level=1)
+
+        avg_annual_premium = metrics.get('avg_annual_premium', 0)
+        if avg_annual_premium > 0:
+            premium_para = doc.add_paragraph()
+            premium_para.add_run(f"Est. Annual Premium: ${avg_annual_premium:,.0f}").bold = True
 
         # Create table: Grid | Jan-Feb | Feb-Mar | ... | Nov-Dec | Acres
         headers = ['Grid'] + INTERVAL_ORDER_11 + ['Acres']
