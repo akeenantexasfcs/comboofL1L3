@@ -1759,7 +1759,7 @@ def run_weather_mvo_optimization(
     # Convert weights back to acres
     optimized_acres = {}
     for i, gid in enumerate(grid_list):
-        optimized_acres[gid] = optimal_weights[i] * total_acres
+        optimized_acres[gid] = int(round(optimal_weights[i] * total_acres))
 
     # Include any grids that weren't in MVO
     for gid in weather_grids:
@@ -1926,12 +1926,12 @@ def apply_budget_constraint(grid_acres, total_cost, budget_limit, allow_scale_up
     if total_cost > budget_limit:
         # Over budget - scale DOWN (with 0.05% buffer to ensure we stay under)
         scale_factor = (budget_limit * 0.9995) / total_cost
-        scaled_acres = {gid: acres * scale_factor for gid, acres in grid_acres.items()}
+        scaled_acres = {gid: int(round(acres * scale_factor)) for gid, acres in grid_acres.items()}
         return scaled_acres, scale_factor
     elif allow_scale_up and total_cost < budget_limit:
         # Under budget and scale-up enabled - scale UP to fill budget (with 0.05% buffer)
         scale_factor = (budget_limit * 0.9995) / total_cost
-        scaled_acres = {gid: acres * scale_factor for gid, acres in grid_acres.items()}
+        scaled_acres = {gid: int(round(acres * scale_factor)) for gid, acres in grid_acres.items()}
         return scaled_acres, scale_factor
     else:
         # Within budget (or under budget but scale-up disabled)
@@ -2026,7 +2026,7 @@ def optimize_grid_allocation(
 
         # Calculate budget-adjusted baseline (proportional scaling)
         budget_adjusted_baseline = {
-            gid: acres * budget_scale
+            gid: int(round(acres * budget_scale))
             for gid, acres in initial_acres_per_grid.items()
         }
         budget_adjusted_total = total_initial_acres * budget_scale
@@ -2108,7 +2108,7 @@ def optimize_grid_allocation(
         # Convert weights to acres using budget_adjusted_total
         optimized_acres = {}
         for i, gid in enumerate(grid_list):
-            optimized_acres[gid] = optimal_weights[i] * budget_adjusted_total
+            optimized_acres[gid] = int(round(optimal_weights[i] * budget_adjusted_total))
 
         # Add any grids that weren't in the optimization with their budget-scaled value
         for gid in selected_grids:
@@ -2138,7 +2138,7 @@ def optimize_grid_allocation(
                 }
 
                 # Apply scaling with iterative redistribution to handle max constraints
-                scaled_acres = {gid: acres * scale_factor for gid, acres in optimized_acres.items()}
+                scaled_acres = {gid: int(round(acres * scale_factor)) for gid, acres in optimized_acres.items()}
 
                 # Cap at max acres
                 for gid in scaled_acres:
@@ -2173,8 +2173,8 @@ def optimize_grid_allocation(
                     additional_scale = 1 + (remaining_budget / new_cost) * 0.5
 
                     for gid in can_scale_grids:
-                        proposed = scaled_acres[gid] * additional_scale
-                        scaled_acres[gid] = min(proposed, max_acres_per_grid.get(gid, proposed))
+                        proposed = int(round(scaled_acres[gid] * additional_scale))
+                        scaled_acres[gid] = int(round(min(proposed, max_acres_per_grid.get(gid, proposed))))
 
                 optimized_acres = scaled_acres
                 optimization_info['stage3_applied'] = True
@@ -2218,7 +2218,7 @@ def optimize_without_budget(
 
         if len(grid_list) == 0:
             # Fallback to uniform
-            return {gid: max_total_acres / len(selected_grids) for gid in selected_grids}
+            return {gid: int(round(max_total_acres / len(selected_grids))) for gid in selected_grids}
 
         n = len(grid_list)
         means = np.array([mean_rois.get(gid, 0) for gid in grid_list])
@@ -2276,7 +2276,7 @@ def optimize_without_budget(
 
         optimized_acres = {}
         for i, gid in enumerate(grid_list):
-            optimized_acres[gid] = optimal_weights[i] * max_total_acres
+            optimized_acres[gid] = int(round(optimal_weights[i] * max_total_acres))
 
         for gid in selected_grids:
             if gid not in optimized_acres:
@@ -2286,7 +2286,7 @@ def optimize_without_budget(
 
     except Exception as e:
         # Fallback to uniform
-        return {gid: max_total_acres / len(selected_grids) for gid in selected_grids}
+        return {gid: int(round(max_total_acres / len(selected_grids))) for gid in selected_grids}
 
 
 def generate_strategy_report_docx(
@@ -5253,7 +5253,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
                                                 # Save budget-scaled acres (before MVO) for display
                                                 budget_scaled_acres = {
-                                                    gid: weather_acres_gen.get(gid, 0) * scale_factor
+                                                    gid: int(round(weather_acres_gen.get(gid, 0) * scale_factor))
                                                     for gid in weather_grids_gen
                                                 }
 
@@ -5274,7 +5274,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                     budget_scale_factor = 1.0
 
                                                 weather3_acres = {
-                                                    gid: acres * budget_scale_factor
+                                                    gid: int(round(acres * budget_scale_factor))
                                                     for gid, acres in weather_acres_gen.items()
                                                 }
                                                 budget_scaled_acres = weather3_acres.copy()
