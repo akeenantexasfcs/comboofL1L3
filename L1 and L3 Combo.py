@@ -3672,6 +3672,9 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
         try:
             all_grids_for_loading = load_distinct_grids(session)
 
+            # Get currently selected Champion grids to prevent overlap/overwriting
+            current_champ_grids = st.session_state.get('ps_grids', [])
+
             # Build mapping for incremental grids
             target_grid_mapping = {}
             for county, grid_ids in KING_RANCH_INCREMENTAL_PRESET['counties'].items():
@@ -3680,36 +3683,57 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
 
             # Match grids from preset
             preset_incremental_grid_ids = []
+            skipped_count = 0
             for numeric_id in KING_RANCH_INCREMENTAL_PRESET['grids']:
                 target_str = target_grid_mapping.get(numeric_id, "")
+
+                # Find the formatted string in available grids
+                found_grid = None
                 if target_str in all_grids_for_loading:
-                    preset_incremental_grid_ids.append(target_str)
+                    found_grid = target_str
                 else:
                     for grid_option in all_grids_for_loading:
                         if extract_numeric_grid_id(grid_option) == numeric_id:
-                            preset_incremental_grid_ids.append(grid_option)
+                            found_grid = grid_option
                             break
 
+                # CRITICAL FIX: Only add to Incrementals if it is NOT already in Champion
+                # This prevents the "Value not in Options" error that resets the widget
+                if found_grid:
+                    if found_grid not in current_champ_grids:
+                        preset_incremental_grid_ids.append(found_grid)
+                    else:
+                        skipped_count += 1
+
             # MERGE with existing incremental grids (don't replace!)
-            # Get existing grids and acres
             existing_incremental_grids = list(st.session_state.get('ps_incremental_grids', []))
 
-            # Add preset grids (skip duplicates)
+            # Add preset grids (skip duplicates in the incremental list itself)
+            added_count = 0
             for grid in preset_incremental_grid_ids:
                 if grid not in existing_incremental_grids:
                     existing_incremental_grids.append(grid)
+                    added_count += 1
 
             # Set merged incremental grids in session state
             st.session_state.ps_incremental_grids = existing_incremental_grids
 
-            # Set acres for each incremental grid from preset (merge with existing)
+            # Set acres for each NEW incremental grid
             for gid in preset_incremental_grid_ids:
                 numeric_id = extract_numeric_grid_id(gid)
                 st.session_state[f"ps_incr_acres_{gid}"] = KING_RANCH_INCREMENTAL_PRESET['acres'].get(numeric_id, 40000)
 
             st.session_state.sidebar_kr_incrementals_requested = False
-            st.success(f"King Ranch Incrementals loaded! ({len(preset_incremental_grid_ids)} preset grids added, {len(existing_incremental_grids)} total incremental grids)")
-            st.rerun()  # Force UI refresh to pick up new session state values
+
+            if added_count > 0:
+                msg = f"Added {added_count} new grids to Incrementals."
+                if skipped_count > 0:
+                    msg += f" ({skipped_count} grids already in Champion were skipped)"
+                st.success(msg)
+            else:
+                st.info("No new grids added (selected grids are already in Champion or Incrementals).")
+
+            st.rerun()  # Force UI refresh
 
         except Exception as e:
             st.error(f"Error loading King Ranch Incrementals: {e}")
