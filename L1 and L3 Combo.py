@@ -1649,10 +1649,10 @@ def run_weather_mvo_optimization(
 
                     premium_rate = premium_rates.get(interval, 0)
                     # Normalize to 1 acre for correlation calculation
-                    interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
-                    total_prem = round_half_up(interval_protection * premium_rate, 0)
-                    prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                    producer_premium = int(total_prem - prem_subsidy)
+                    interval_protection = int(round_half_up(dollar_protection * 1 * pct, 0))
+                    total_prem = int(round_half_up(interval_protection * premium_rate, 0))
+                    prem_subsidy = int(round_half_up(total_prem * subsidy, 0))
+                    producer_premium = total_prem - prem_subsidy
 
                     trigger = coverage_level * 100
                     shortfall = max(0, (trigger - index_value) / trigger)
@@ -1813,10 +1813,10 @@ def calculate_yearly_roi_for_grid(
             index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
 
             premium_rate = premium_rates.get(interval, 0)
-            interval_protection = round_half_up(total_protection * pct, 0)
-            total_premium = round_half_up(interval_protection * premium_rate, 0)
-            premium_subsidy = round_half_up(total_premium * subsidy, 0)
-            producer_premium = int(total_premium - premium_subsidy)
+            interval_protection = int(round_half_up(total_protection * pct, 0))
+            total_premium = int(round_half_up(interval_protection * premium_rate, 0))
+            premium_subsidy = int(round_half_up(total_premium * subsidy, 0))
+            producer_premium = total_premium - premium_subsidy
 
             trigger = coverage_level * 100
             shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -1893,10 +1893,10 @@ def calculate_annual_premium_cost(
                 if pct == 0:
                     continue
                 premium_rate = premium_rates.get(interval, 0)
-                interval_protection = round_half_up(total_protection * pct, 0)
-                total_premium = round_half_up(interval_protection * premium_rate, 0)
-                premium_subsidy = round_half_up(total_premium * subsidy, 0)
-                producer_premium = int(total_premium - premium_subsidy)
+                interval_protection = int(round_half_up(total_protection * pct, 0))
+                total_premium = int(round_half_up(interval_protection * premium_rate, 0))
+                premium_subsidy = int(round_half_up(total_premium * subsidy, 0))
+                producer_premium = total_premium - premium_subsidy
                 grid_premium += producer_premium
 
             grid_breakdown[gid] = grid_premium
@@ -2812,10 +2812,10 @@ def run_portfolio_backtest(
                     index_value = float(index_row['INDEX_VALUE']) if index_row is not None else 100
 
                     premium_rate = premium_rates_df.get(interval, 0)
-                    interval_protection = round_half_up(total_protection * pct, 0)
-                    total_premium = round_half_up(interval_protection * premium_rate, 0)
-                    premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                    producer_premium = int(total_premium - premium_subsidy)
+                    interval_protection = int(round_half_up(total_protection * pct, 0))
+                    total_premium = int(round_half_up(interval_protection * premium_rate, 0))
+                    premium_subsidy = int(round_half_up(total_premium * subsidy_percent, 0))
+                    producer_premium = total_premium - premium_subsidy
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -2947,10 +2947,10 @@ def generate_base_data_for_mvo(session, selected_grids, grid_results_with_alloca
                     index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
 
                     premium_rate = premium_rates.get(interval, 0)
-                    interval_protection = round_half_up(total_protection * pct, 0)
-                    total_prem = round_half_up(interval_protection * premium_rate, 0)
-                    prem_subsidy = round_half_up(total_prem * subsidy_percent, 0)
-                    producer_premium = int(total_prem - prem_subsidy)
+                    interval_protection = int(round_half_up(total_protection * pct, 0))
+                    total_prem = int(round_half_up(interval_protection * premium_rate, 0))
+                    prem_subsidy = int(round_half_up(total_prem * subsidy_percent, 0))
+                    producer_premium = total_prem - prem_subsidy
 
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -4288,10 +4288,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                     index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
 
                                     premium_rate = premium_rates.get(interval, 0)
-                                    interval_protection = round_half_up(dollar_protection * 1 * pct, 0)  # 1 acre
-                                    total_prem = round_half_up(interval_protection * premium_rate, 0)
-                                    prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                                    producer_prem = int(total_prem - prem_subsidy)
+                                    interval_protection = int(round_half_up(dollar_protection * 1 * pct, 0))  # 1 acre
+                                    total_prem = int(round_half_up(interval_protection * premium_rate, 0))
+                                    prem_subsidy = int(round_half_up(total_prem * subsidy, 0))
+                                    producer_prem = total_prem - prem_subsidy
 
                                     trigger = coverage_level * 100
                                     shortfall = max(0, (trigger - index_value) / trigger)
@@ -5165,10 +5165,10 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                                         index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
 
                                                         premium_rate = premium_rates.get(interval, 0)
-                                                        interval_protection = round_half_up(dollar_protection * 1 * pct, 0)
-                                                        total_prem = round_half_up(interval_protection * premium_rate, 0)
-                                                        prem_subsidy = round_half_up(total_prem * subsidy, 0)
-                                                        producer_premium = int(total_prem - prem_subsidy)
+                                                        interval_protection = int(round_half_up(dollar_protection * 1 * pct, 0))
+                                                        total_prem = int(round_half_up(interval_protection * premium_rate, 0))
+                                                        prem_subsidy = int(round_half_up(total_prem * subsidy, 0))
+                                                        producer_premium = total_prem - prem_subsidy
 
                                                         trigger = coverage_level * 100
                                                         shortfall = max(0, (trigger - index_value) / trigger)
@@ -5894,10 +5894,10 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                                 index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
 
                                 premium_rate = premium_rates_df.get(interval, 0)
-                                interval_protection = round_half_up(total_protection * pct, 0)
-                                total_premium = round_half_up(interval_protection * premium_rate, 0)
-                                premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                                producer_premium = int(total_premium - premium_subsidy)
+                                interval_protection = int(round_half_up(total_protection * pct, 0))
+                                total_premium = int(round_half_up(interval_protection * premium_rate, 0))
+                                premium_subsidy = int(round_half_up(total_premium * subsidy_percent, 0))
+                                producer_premium = total_premium - premium_subsidy
 
                                 trigger = coverage_level * 100
                                 shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -5974,10 +5974,10 @@ Consider whether your conviction in the La Nina thesis justifies this downside r
                             index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
 
                             premium_rate = premium_rates_df.get(interval, 0)
-                            interval_protection = round_half_up(total_protection * pct, 0)
-                            total_premium = round_half_up(interval_protection * premium_rate, 0)
-                            premium_subsidy = round_half_up(total_premium * subsidy_percent, 0)
-                            producer_premium = int(total_premium - premium_subsidy)
+                            interval_protection = int(round_half_up(total_protection * pct, 0))
+                            total_premium = int(round_half_up(interval_protection * premium_rate, 0))
+                            premium_subsidy = int(round_half_up(total_premium * subsidy_percent, 0))
+                            producer_premium = total_premium - premium_subsidy
 
                             trigger = coverage_level * 100
                             shortfall_pct = max(0, (trigger - index_value) / trigger)
@@ -6852,10 +6852,10 @@ def run_optimization_s4(
                 index_row = year_data[year_data['INTERVAL_NAME'] == interval]
                 index_value = float(index_row['INDEX_VALUE'].iloc[0]) if not index_row.empty else 100
                 premium_rate = premiums.get(interval, 0)
-                interval_protection = round_half_up(total_protection * pct, 0)
-                total_premium = round_half_up(interval_protection * premium_rate, 0)
-                premium_subsidy = round_half_up(total_premium * subsidy, 0)
-                producer_premium = int(total_premium - premium_subsidy)
+                interval_protection = int(round_half_up(total_protection * pct, 0))
+                total_premium = int(round_half_up(interval_protection * premium_rate, 0))
+                premium_subsidy = int(round_half_up(total_premium * subsidy, 0))
+                producer_premium = total_premium - premium_subsidy
 
                 trigger = coverage_level * 100
                 shortfall_pct = max(0, (trigger - index_value) / trigger)
