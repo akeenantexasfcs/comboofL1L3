@@ -3595,6 +3595,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             # Set session state values
             st.session_state.ps_grids = preset_grid_ids
             st.session_state.productivity_factor = 1.35
+            st.session_state.sidebar_prod_factor = "135%"  # Sync sidebar widget
             st.session_state.ps_coverage = 0.75  # Set to 75% coverage
 
             # Set acres for each grid
@@ -3643,6 +3644,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
             # Set session state values
             st.session_state.ps_grids = preset_grid_ids
             st.session_state.productivity_factor = 1.35
+            st.session_state.sidebar_prod_factor = "135%"  # Sync sidebar widget
             st.session_state.ps_coverage = 0.75  # Set to 75% coverage
 
             # Set acres for each grid
@@ -6378,6 +6380,7 @@ def render_tab5(session, grid_id, intended_use, productivity_factor, total_insur
 
                 # Set King Ranch specific parameters
                 st.session_state.productivity_factor = 1.35  # 135%
+                st.session_state.sidebar_prod_factor = "135%"  # Sync sidebar widget
                 st.session_state.tab5_coverage = 0.75  # 75% coverage
 
                 st.success("King Ranch loaded! (8 grids, 135% productivity, 75% coverage)")
@@ -7006,12 +7009,13 @@ def render_tab4(session, grid_id, intended_use, productivity_factor, total_insur
                             st.warning(f"Could not find grid {numeric_id}")
                 
                 st.session_state.s4_grids = preset_grid_ids
-                
+
                 # Set King Ranch specific parameters
                 st.session_state.productivity_factor = 1.35  # 135%
+                st.session_state.sidebar_prod_factor = "135%"  # Sync sidebar widget
                 st.session_state.s4_coverage = [0.75]  # 75% coverage only
                 st.session_state.s4_king_ranch_comparison_mode = True  # Flag for comparison output
-                
+
                 if preset_grid_ids:
                     st.success("✅ King Ranch loaded! (8 grids, 135% productivity, 75% coverage)")
 
