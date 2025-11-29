@@ -2359,9 +2359,9 @@ def generate_strategy_report_docx(
             doc.add_heading(f'{title} - No grids', level=1)
             return 0, []
 
-        # Filter to only grids with acres > 0
-        active_grids = [gid for gid in grids if acres.get(gid, 0) > 0]
-        dropped_grids = [gid for gid in grids if acres.get(gid, 0) <= 0]
+        # Filter to only grids with rounded acres > 0 (avoids showing "0" for fractional values)
+        active_grids = [gid for gid in grids if round(acres.get(gid, 0)) > 0]
+        dropped_grids = [gid for gid in grids if round(acres.get(gid, 0)) <= 0]
 
         if not active_grids:
             doc.add_heading(f'{title} - All grids have 0 acres', level=1)
