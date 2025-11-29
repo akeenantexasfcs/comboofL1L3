@@ -5467,12 +5467,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                         corr_df = weather3['analog_roi_correlation']
 
                                         # Generate heatmap matching Historical Grid Correlations style
-                                        fig, ax = plt.subplots(figsize=(10, 6))
+                                        fig, ax = plt.subplots(figsize=(14, 10))
                                         sns.heatmap(
                                             corr_df,
                                             annot=True,
                                             cmap='RdYlGn',
-                                            fmt=".3f",
+                                            fmt=".2f",
+                                            annot_kws={'size': 7},
                                             vmin=-1,
                                             vmax=1,
                                             center=0,
@@ -5480,6 +5481,8 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                                             square=True,
                                             linewidths=0.5
                                         )
+                                        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', fontsize=8)
+                                        ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=8)
                                         ax.set_title("Analog Year ROI Correlations", fontsize=12)
                                         plt.tight_layout()
 
