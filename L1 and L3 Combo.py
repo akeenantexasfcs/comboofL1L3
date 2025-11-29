@@ -2774,9 +2774,15 @@ def run_portfolio_backtest(
     """
     Run a historical backtest for a portfolio of grids.
     Returns: (portfolio_results_df, grid_results_dict, metrics_dict)
+
+    Uses strict Decimal arithmetic for all financial calculations to match
+    the PRF official tool exactly and avoid floating-point precision errors.
     """
     grid_results = {}
     portfolio_yearly = {}
+
+    # Decimal quantizers for rounding
+    QUANTIZE_INT = Decimal('1')
 
     for gid in selected_grids:
         try:
@@ -2787,6 +2793,10 @@ def run_portfolio_backtest(
 
             dollar_protection = calculate_protection(county_base_value, coverage_level, productivity_factor)
             total_protection = dollar_protection * grid_acres.get(gid, 0)
+
+            # Convert to Decimal once for use in all interval calculations
+            total_protection_dec = Decimal(str(total_protection))
+            subsidy_percent_dec = Decimal(str(subsidy_percent))
 
             all_indices_df = load_all_indices(session, gid)
 
@@ -2812,16 +2822,36 @@ def run_portfolio_backtest(
                     index_value = float(index_row['INDEX_VALUE']) if index_row is not None else 100
 
                     premium_rate = premium_rates_df.get(interval, 0)
-                    interval_protection = int(round_half_up(total_protection * pct, 0))
-                    total_premium = int(round_half_up(interval_protection * premium_rate, 0))
-                    premium_subsidy = int(round_half_up(total_premium * subsidy_percent, 0))
+
+                    # Use Decimal arithmetic for all financial calculations
+                    # interval_protection = Round Half Up(Total Protection * Allocation %)
+                    pct_dec = Decimal(str(pct))
+                    interval_protection_dec = (total_protection_dec * pct_dec).quantize(QUANTIZE_INT, rounding=ROUND_HALF_UP)
+                    interval_protection = int(interval_protection_dec)
+
+                    # total_premium = Round Half Up(Interval Protection * Rate)
+                    premium_rate_dec = Decimal(str(premium_rate))
+                    total_premium_dec = (interval_protection_dec * premium_rate_dec).quantize(QUANTIZE_INT, rounding=ROUND_HALF_UP)
+                    total_premium = int(total_premium_dec)
+
+                    # subsidy = Round Half Up(Total Premium * Subsidy %)
+                    premium_subsidy_dec = (total_premium_dec * subsidy_percent_dec).quantize(QUANTIZE_INT, rounding=ROUND_HALF_UP)
+                    premium_subsidy = int(premium_subsidy_dec)
+
+                    # producer_premium = total_premium - subsidy (Integer math)
                     producer_premium = total_premium - premium_subsidy
 
+                    # indemnity = Round Half Up(shortfall_pct * interval_protection)
                     trigger = coverage_level * 100
                     shortfall_pct = max(0, (trigger - index_value) / trigger)
-                    raw_indemnity = shortfall_pct * interval_protection
-                    # Convert to int immediately to ensure exact integer arithmetic when summing
-                    indemnity = int(round_half_up(raw_indemnity, 0)) if raw_indemnity >= 0.01 else 0
+                    shortfall_pct_dec = Decimal(str(shortfall_pct))
+                    raw_indemnity_dec = shortfall_pct_dec * interval_protection_dec
+
+                    # Only apply indemnity if raw value >= 0.01
+                    if raw_indemnity_dec >= Decimal('0.01'):
+                        indemnity = int(raw_indemnity_dec.quantize(QUANTIZE_INT, rounding=ROUND_HALF_UP))
+                    else:
+                        indemnity = 0
 
                     year_indemnity += indemnity
                     year_premium += producer_premium
