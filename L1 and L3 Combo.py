@@ -4689,6 +4689,7 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             trajectory
                         )
 
+                        st.session_state.ps_analog_years_original = analog_years  # Keep original unfiltered list
                         st.session_state.ps_analog_years = analog_years
                         st.session_state.ps_weather_config = {
                             'grids': weather_grids,
@@ -4719,7 +4720,42 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             criteria_parts.append(mv_trend)
 
                         criteria_label = " + ".join(criteria_parts) if criteria_parts else "All Conditions"
-                        st.success(f"**Found {len(analog_years)} analog years** matching: {criteria_label}")
+
+                        # Get original count for display
+                        original_analog_years = st.session_state.get('ps_analog_years_original', analog_years)
+                        st.success(f"**Found {len(original_analog_years)} analog years** matching: {criteria_label}")
+
+                        # --- Analog Year Cutoff Filter ---
+                        filter_col1, filter_col2 = st.columns([1, 1])
+                        with filter_col1:
+                            exclude_early_years = st.checkbox(
+                                "Exclude analog years before:",
+                                value=st.session_state.get('ps_exclude_early_years', False),
+                                key="ps_exclude_early_years"
+                            )
+
+                        if exclude_early_years:
+                            with filter_col2:
+                                cutoff_year = st.selectbox(
+                                    "Cutoff year",
+                                    options=[1960, 1970, 1980, 1990, 2000],
+                                    index=st.session_state.get('ps_analog_cutoff_index', 1),  # Default to 1970
+                                    key="ps_analog_cutoff_year"
+                                )
+                                # Store the index for persistence
+                                st.session_state.ps_analog_cutoff_index = [1960, 1970, 1980, 1990, 2000].index(cutoff_year)
+
+                            # Filter analog_years list - simple list filtering only, no calculation changes
+                            filtered_analog_years = [y for y in original_analog_years if y['year'] >= cutoff_year]
+                            st.session_state.ps_analog_years = filtered_analog_years
+                            st.session_state.ps_analog_cutoff_applied = cutoff_year
+                            analog_years = filtered_analog_years  # Update local variable for display
+                            st.info(f"📅 Filtered to **{len(filtered_analog_years)} years** (excluding pre-{cutoff_year})")
+                        else:
+                            # No filter - use original list
+                            st.session_state.ps_analog_years = original_analog_years
+                            st.session_state.ps_analog_cutoff_applied = None
+                            analog_years = original_analog_years
 
                         # Show details in expander
                         with st.expander("📅 View Analog Year Details", expanded=False):
@@ -5528,7 +5564,13 @@ def render_portfolio_strategy_tab(session, grid_id, intended_use, productivity_f
                             if trend_text_stress != 'Any':
                                 criteria_stress.append(trend_text_stress)
 
-                            analog_label = f"Analog Years Only ({' + '.join(criteria_stress)})" if criteria_stress else "Analog Years Only (All Conditions)"
+                            # Build analog label with criteria and cutoff year if applied
+                            criteria_text = ' + '.join(criteria_stress) if criteria_stress else "All Conditions"
+                            cutoff_applied = st.session_state.get('ps_analog_cutoff_applied')
+                            if cutoff_applied:
+                                analog_label = f"Analog Years Only ({criteria_text}, ≥{cutoff_applied})"
+                            else:
+                                analog_label = f"Analog Years Only ({criteria_text})"
 
                             stress_scenario = st.radio(
                                 "Select scenario to test:",
